@@ -17,3 +17,6 @@ trino-rust-client = { path = "../trino-rust-client" }
 serde = { version = "1", features = ["derive"] }
 async-stream = "0.3"
 sqlparser = { version = "0.61", features = ["visitor"] }
+
+[dev-dependencies]
+tokio-postgres = "0.7"
