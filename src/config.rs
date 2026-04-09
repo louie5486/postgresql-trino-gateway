@@ -27,4 +27,12 @@ pub struct Config {
     /// Trino user to authenticate as.
     #[arg(long, default_value = "trino")]
     pub trino_user: String,
+
+    /// Use HTTPS to connect to Trino.
+    #[arg(long, default_value_t = false)]
+    pub trino_ssl: bool,
+
+    /// Skip TLS certificate verification (for self-signed certs).
+    #[arg(long, default_value_t = false)]
+    pub trino_ssl_insecure: bool,
 }

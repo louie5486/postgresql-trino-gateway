@@ -61,15 +61,24 @@ impl StartupHandler for GatewayStartupHandler {
             save_startup_parameters_to_metadata(client, startup);
             finish_authentication(client, &GatewayParameterProvider).await?;
 
-            let trino_client = trino_rust_client::ClientBuilder::new(
+            let mut builder = trino_rust_client::ClientBuilder::new(
                 &self.config.trino_user,
                 &self.config.trino_host,
             )
             .port(self.config.trino_port)
             .catalog(&self.config.trino_catalog)
-            .schema(&self.config.trino_schema)
-            .build()
-            .map_err(|e| PgWireError::ApiError(Box::new(e)))?;
+            .schema(&self.config.trino_schema);
+
+            if self.config.trino_ssl {
+                builder = builder.secure(true);
+            }
+            if self.config.trino_ssl_insecure {
+                builder = builder.no_verify(true);
+            }
+
+            let trino_client = builder
+                .build()
+                .map_err(|e| PgWireError::ApiError(Box::new(e)))?;
 
             client.session_extensions().insert(trino_client);
 

@@ -91,26 +91,55 @@ pub async fn execute_trino_query(
         return Err(PgWireError::UserError(Box::new(info)));
     }
 
-    // 3. Extract column metadata
-    let trino_columns: Vec<TrinoColumn> = result
+    // 3. Extract column metadata — Trino often returns columns: null in the
+    //    initial response. We need to poll nextUri until columns appear.
+    let mut trino_columns: Vec<TrinoColumn> = result
         .columns
         .as_ref()
         .map(|cols| cols.iter().map(TrinoColumn::from).collect())
         .unwrap_or_default();
 
+    let mut initial_rows = extract_direct_rows(result.data);
+    let mut next_uri = result.next_uri;
+
+    // Poll until we get column metadata or run out of URIs
+    while trino_columns.is_empty() {
+        match next_uri.take() {
+            Some(url) => {
+                let next_result = client
+                    .get_next::<Row>(&url)
+                    .await
+                    .map_err(|e| {
+                        let info = crate::error_mapping::trino_error_to_pg(&e.to_string());
+                        PgWireError::UserError(Box::new(info))
+                    })?;
+
+                if let Some(error) = &next_result.error {
+                    let info = crate::error_mapping::trino_error_to_pg(&error.message);
+                    return Err(PgWireError::UserError(Box::new(info)));
+                }
+
+                if let Some(cols) = &next_result.columns {
+                    trino_columns = cols.iter().map(TrinoColumn::from).collect();
+                }
+
+                let mut rows = extract_direct_rows(next_result.data);
+                initial_rows.append(&mut rows);
+                next_uri = next_result.next_uri;
+            }
+            None => break,
+        }
+    }
+
     if trino_columns.is_empty() {
         let info = crate::error_mapping::trino_error_to_pg(
-            "Trino query returned no column metadata",
+            "Trino query completed without returning column metadata",
         );
         return Err(PgWireError::UserError(Box::new(info)));
     }
 
     // 4. Build PG schema
     let schema = build_pg_schema(&trino_columns);
-
-    // 5. Extract initial rows
-    let initial_rows = extract_direct_rows(result.data);
-    let mut next_uri = result.next_uri;
 
     // 6. Create streaming bridge
     let stream_client = Arc::clone(client);
