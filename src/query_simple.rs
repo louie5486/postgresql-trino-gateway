@@ -29,6 +29,10 @@ impl SimpleQueryHandler for GatewayQueryHandler {
     {
         tracing::debug!(query, "Received query");
 
+        if let Some(result) = crate::intercept::intercept_query(query) {
+            return result;
+        }
+
         let trino_client: Arc<TrinoClient> = client
             .session_extensions()
             .get::<TrinoClient>()
