@@ -38,8 +38,11 @@ impl SimpleQueryHandler for GatewayQueryHandler {
             .get::<TrinoClient>()
             .ok_or_else(|| PgWireError::ApiError("No Trino client in session".into()))?;
 
+        let rewritten = crate::rewrite::rewrite_sql(query);
+        tracing::debug!(original = query, rewritten = %rewritten, "Rewritten query");
+
         let (schema, row_stream) =
-            execute_trino_query(&trino_client, query.to_string()).await?;
+            execute_trino_query(&trino_client, rewritten).await?;
 
         Ok(vec![Response::Query(QueryResponse::new(schema, row_stream))])
     }
