@@ -24,7 +24,11 @@ pub fn trino_error_to_pg(error_msg: &str) -> ErrorInfo {
         "42000" // syntax_error_or_access_rule_violation (generic)
     };
 
-    ErrorInfo::new("ERROR".to_owned(), sqlstate.to_owned(), error_msg.to_owned())
+    ErrorInfo::new(
+        "ERROR".to_owned(),
+        sqlstate.to_owned(),
+        error_msg.to_owned(),
+    )
 }
 
 /// Detect Trino's positional syntax error pattern like "line 1:7:".

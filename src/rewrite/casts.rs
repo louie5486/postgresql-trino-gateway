@@ -1,5 +1,5 @@
-use sqlparser::ast::{CastKind, DataType, Expr};
 use sqlparser::ast::VisitorMut;
+use sqlparser::ast::{CastKind, DataType, Expr};
 use std::ops::ControlFlow;
 
 /// Rewrites `::` cast syntax to `CAST()` and normalizes PG type names to Trino equivalents.

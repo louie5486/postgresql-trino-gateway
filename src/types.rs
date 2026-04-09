@@ -190,18 +190,12 @@ mod tests {
 
     #[test]
     fn interval_year_to_month() {
-        assert_eq!(
-            trino_type_to_pg("interval year to month"),
-            Type::INTERVAL
-        );
+        assert_eq!(trino_type_to_pg("interval year to month"), Type::INTERVAL);
     }
 
     #[test]
     fn interval_day_to_second() {
-        assert_eq!(
-            trino_type_to_pg("interval day to second"),
-            Type::INTERVAL
-        );
+        assert_eq!(trino_type_to_pg("interval day to second"), Type::INTERVAL);
     }
 
     #[test]
@@ -315,19 +309,13 @@ mod tests {
     #[test]
     fn encode_integer_number() {
         let val = serde_json::json!(42);
-        assert_eq!(
-            encode_value(&val, "integer"),
-            Some("42".to_owned())
-        );
+        assert_eq!(encode_value(&val, "integer"), Some("42".to_owned()));
     }
 
     #[test]
     fn encode_float_number() {
         let val = serde_json::json!(3.14);
-        assert_eq!(
-            encode_value(&val, "double"),
-            Some("3.14".to_owned())
-        );
+        assert_eq!(encode_value(&val, "double"), Some("3.14".to_owned()));
     }
 
     #[test]

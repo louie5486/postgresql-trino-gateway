@@ -133,7 +133,8 @@ mod tests {
 
     #[test]
     fn composite_fields_detected() {
-        let query = "SELECT a.attname, t.typname FROM pg_attribute a JOIN pg_type t ON a.atttypid = t.oid";
+        let query =
+            "SELECT a.attname, t.typname FROM pg_attribute a JOIN pg_type t ON a.atttypid = t.oid";
         assert!(handle_catalog_query(query).is_some());
     }
 
@@ -178,14 +179,18 @@ mod tests {
 
     #[test]
     fn pg_type_response_has_correct_row_count() {
-        let resp = handle_catalog_query("SELECT * FROM pg_type").unwrap().unwrap();
+        let resp = handle_catalog_query("SELECT * FROM pg_type")
+            .unwrap()
+            .unwrap();
         assert_eq!(resp.len(), 1);
         // Verify it built successfully; the row count is validated in pg_type::tests.
     }
 
     #[test]
     fn pg_namespace_returns_three_rows() {
-        let resp = handle_catalog_query("SELECT * FROM pg_namespace").unwrap().unwrap();
+        let resp = handle_catalog_query("SELECT * FROM pg_namespace")
+            .unwrap()
+            .unwrap();
         assert_eq!(resp.len(), 1);
     }
 }

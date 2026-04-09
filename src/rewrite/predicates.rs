@@ -1,8 +1,8 @@
+use sqlparser::ast::VisitorMut;
 use sqlparser::ast::{
     Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments, Ident,
     ObjectName, Value,
 };
-use sqlparser::ast::VisitorMut;
 use std::ops::ControlFlow;
 
 /// Rewrites `ILIKE` to `lower(x) LIKE lower(pattern)` for Trino compatibility.
