@@ -69,7 +69,7 @@ pub fn handle_catalog_query(query: &str) -> Option<PgWireResult<Vec<Response>>> 
     }
 
     // pg_namespace
-    if upper.contains("FROM PG_NAMESPACE") {
+    if upper.contains("PG_NAMESPACE") {
         return Some(stubs::respond_pg_namespace());
     }
 
@@ -94,14 +94,14 @@ pub async fn handle_dynamic_catalog_query(
         return None; // handled by static intercept
     }
 
-    // pg_class
-    if upper.contains("FROM PG_CLASS") || upper.contains("JOIN PG_CLASS") {
+    // pg_class (matches "FROM pg_class", "FROM pg_catalog.pg_class", "JOIN pg_class", etc.)
+    if upper.contains("PG_CLASS") && (upper.contains("FROM") || upper.contains("JOIN")) {
         tracing::debug!("Dynamic catalog: pg_class");
         return Some(pg_class::respond_pg_class(client).await);
     }
 
     // pg_attribute (standalone, not the pg_attribute+pg_type join)
-    if upper.contains("FROM PG_ATTRIBUTE") || upper.contains("JOIN PG_ATTRIBUTE") {
+    if upper.contains("PG_ATTRIBUTE") && (upper.contains("FROM") || upper.contains("JOIN")) {
         tracing::debug!("Dynamic catalog: pg_attribute");
         return Some(pg_attribute::respond_pg_attribute(client).await);
     }
