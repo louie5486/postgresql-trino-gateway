@@ -91,8 +91,8 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
 
     async fn do_describe_portal<C>(
         &self,
-        _client: &mut C,
-        _portal: &Portal<Self::Statement>,
+        client: &mut C,
+        portal: &Portal<Self::Statement>,
     ) -> PgWireResult<DescribePortalResponse>
     where
         C: ClientInfo + ClientPortalStore + Sink<PgWireBackendMessage> + Unpin + Send + Sync,
@@ -100,6 +100,35 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
-        Ok(DescribePortalResponse::new(vec![]))
+        // The JDBC/ODBC driver needs the column schema from Describe Portal
+        // BEFORE Execute sends DataRow messages. Without this, clients get
+        // "Received resultset tuples, but no field structure for them".
+        //
+        // We run the full query pipeline to get the schema. This means the
+        // query executes during Describe and again during Execute — a double
+        // execution. This is acceptable because:
+        // 1. Intercepted/catalog queries are cheap (no Trino round-trip)
+        // 2. For Trino queries, the alternative (not supporting Describe Portal)
+        //    makes JDBC/ODBC clients completely unusable
+        let query = &portal.statement.statement;
+        tracing::debug!(query, "Extended query describe portal");
+
+        let trino_client: Arc<TrinoClient> = client
+            .session_extensions()
+            .get::<TrinoClient>()
+            .ok_or_else(|| PgWireError::ApiError("No Trino client in session".into()))?;
+
+        let config: Arc<Config> = client
+            .session_extensions()
+            .get::<Config>()
+            .ok_or_else(|| PgWireError::ApiError("No Config in session".into()))?;
+
+        let responses = process_query(query, &trino_client, &config).await?;
+        let fields = match responses.into_iter().next() {
+            Some(Response::Query(qr)) => qr.row_schema.as_ref().clone(),
+            _ => vec![], // DDL/DML — no columns, NoData is correct
+        };
+
+        Ok(DescribePortalResponse::new(fields))
     }
 }
