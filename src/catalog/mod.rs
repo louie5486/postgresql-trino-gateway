@@ -53,17 +53,17 @@ pub fn handle_catalog_query(query: &str) -> Option<PgWireResult<Vec<Response>>> 
         return Some(stubs::empty_composite_fields());
     }
 
-    // pg_type (must come after the pg_attribute+pg_type check)
+    // pg_enum (must come before pg_type — the enum query JOINs pg_type)
+    if upper.contains("FROM PG_ENUM") || upper.contains("JOIN PG_ENUM") {
+        return Some(stubs::empty_enum_labels());
+    }
+
+    // pg_type (must come after pg_attribute+pg_type and pg_enum checks)
     if upper.contains("FROM PG_TYPE")
         || upper.contains("JOIN PG_TYPE")
         || upper.contains(".PG_TYPE")
     {
         return Some(pg_type::respond_type_loading());
-    }
-
-    // pg_enum
-    if upper.contains("FROM PG_ENUM") || upper.contains("JOIN PG_ENUM") {
-        return Some(stubs::empty_enum_labels());
     }
 
     // pg_range
