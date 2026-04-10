@@ -109,15 +109,11 @@ fn intercept_missing_information_schema(upper: &str) -> Option<PgWireResult<Vec<
     None
 }
 
-/// Return an empty result set with no columns (CommandComplete with 0 rows).
+/// Return an empty execution result (CommandComplete, no result set).
+/// Used for queries against tables that don't exist in Trino — the client
+/// gets a clean "0 rows affected" response rather than an error or null schema.
 fn empty_query_response() -> PgWireResult<Vec<Response>> {
-    use futures::stream;
-    use pgwire::api::results::QueryResponse;
-    let schema = Arc::new(vec![]);
-    Ok(vec![Response::Query(QueryResponse::new(
-        schema,
-        stream::empty(),
-    ))])
+    Ok(vec![Response::Execution(Tag::new("SELECT").with_rows(0))])
 }
 
 fn intercept_transaction(upper: &str) -> Option<PgWireResult<Vec<Response>>> {
