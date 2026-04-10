@@ -18,10 +18,10 @@ Copyright 2026 Stackable GmbH. Licensed under OSL-3.0.
 
 ```bash
 # Standard build (dynamically linked)
-./build.sh
+./scripts/build.sh
 
 # Static build (no glibc dependency, runs on any Linux)
-./build-static.sh
+./scripts/build-static.sh
 ```
 
 ### Run
@@ -32,7 +32,7 @@ export TRINO_HOST=your-trino-host
 export TRINO_PORT=8443
 export TRINO_CATALOG=tpch
 export TRINO_SCHEMA=sf1
-./start.sh
+./scripts/start.sh
 
 # Or run directly
 ./target/release/postgresql-trino-gateway \
@@ -51,7 +51,7 @@ export TRINO_SCHEMA=sf1
 psql -h gateway-host -p 15432 -U trino -d tpch
 
 # Or use the helper script
-./connect.sh
+./scripts/connect.sh
 ```
 
 ## Configuration
@@ -74,10 +74,10 @@ All options can be passed as CLI flags or set via environment variables in `star
 
 ```bash
 # Info level (connections, auth)
-RUST_LOG=postgresql_trino_gateway=info ./start.sh
+RUST_LOG=postgresql_trino_gateway=info ./scripts/start.sh
 
 # Debug level (every query, SQL rewrites)
-RUST_LOG=postgresql_trino_gateway=debug ./start.sh
+RUST_LOG=postgresql_trino_gateway=debug ./scripts/start.sh
 ```
 
 ### Authentication
@@ -128,10 +128,10 @@ Power BI / psql / DBeaver
 
 | Script | Description |
 |--------|-------------|
-| `build.sh` | Build release binary (dynamically linked) |
-| `build-static.sh` | Build static binary with musl (runs on any Linux) |
-| `start.sh` | Start the gateway (configure via env vars) |
-| `connect.sh` | Connect with psql for testing |
+| `scripts/build.sh` | Build release binary (dynamically linked) |
+| `scripts/build-static.sh` | Build static binary with musl (runs on any Linux) |
+| `scripts/start.sh` | Start the gateway (configure via env vars) |
+| `scripts/connect.sh` | Connect with psql for testing |
 
 ## Testing
 
