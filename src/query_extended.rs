@@ -115,12 +115,20 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
 
             match self.do_query(client, portal.as_ref(), max_rows).await? {
                 Response::Query(results) => {
+                    let col_names: Vec<&str> =
+                        results.row_schema.iter().map(|f| f.name()).collect();
+                    tracing::trace!(
+                        columns = ?col_names,
+                        "Extended query execute: sending RowDescription + DataRows"
+                    );
                     send_query_response(client, results, true).await?;
                 }
                 Response::Execution(tag) => {
+                    tracing::trace!("Extended query execute: sending Execution tag");
                     send_execution_response(client, tag).await?;
                 }
                 Response::Error(err) => {
+                    tracing::trace!(error = %err, "Extended query execute: sending Error");
                     client
                         .send(PgWireBackendMessage::ErrorResponse((*err).into()))
                         .await?;
@@ -197,7 +205,11 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
 
         let responses = process_query(query, &trino_client, &config).await?;
         let fields = match responses.into_iter().next() {
-            Some(Response::Query(qr)) => qr.row_schema.as_ref().clone(),
+            Some(Response::Query(qr)) => {
+                let cols: Vec<&str> = qr.row_schema.iter().map(|f| f.name()).collect();
+                tracing::trace!(columns = ?cols, "Describe portal: returning RowDescription");
+                qr.row_schema.as_ref().clone()
+            }
             _ => vec![], // DDL/DML — no columns
         };
 
