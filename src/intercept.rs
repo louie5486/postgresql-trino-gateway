@@ -74,7 +74,49 @@ pub fn intercept_query(
         return Some(resp);
     }
 
+    // information_schema tables that don't exist in Trino — return empty results.
+    // Power BI queries these for relationship/constraint discovery.
+    if let Some(resp) = intercept_missing_information_schema(&upper) {
+        return Some(resp);
+    }
+
     None
+}
+
+/// Intercept queries against information_schema tables that Trino doesn't have.
+/// Returns empty result sets so the client proceeds without constraint data.
+fn intercept_missing_information_schema(upper: &str) -> Option<PgWireResult<Vec<Response>>> {
+    let missing_tables = [
+        "REFERENTIAL_CONSTRAINTS",
+        "TABLE_CONSTRAINTS",
+        "KEY_COLUMN_USAGE",
+        "CONSTRAINT_COLUMN_USAGE",
+        "CONSTRAINT_TABLE_USAGE",
+        "CHECK_CONSTRAINTS",
+    ];
+
+    for table in &missing_tables {
+        if upper.contains(table) {
+            tracing::debug!(
+                table,
+                "Intercepting query for missing information_schema table"
+            );
+            return Some(empty_query_response());
+        }
+    }
+
+    None
+}
+
+/// Return an empty result set with no columns (CommandComplete with 0 rows).
+fn empty_query_response() -> PgWireResult<Vec<Response>> {
+    use futures::stream;
+    use pgwire::api::results::QueryResponse;
+    let schema = Arc::new(vec![]);
+    Ok(vec![Response::Query(QueryResponse::new(
+        schema,
+        stream::empty(),
+    ))])
 }
 
 fn intercept_transaction(upper: &str) -> Option<PgWireResult<Vec<Response>>> {
