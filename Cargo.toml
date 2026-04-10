@@ -2,9 +2,14 @@
 name = "postgresql-trino-gateway"
 version = "0.1.0"
 edition = "2024"
+authors = ["Stackable GmbH"]
+description = "A PostgreSQL wire protocol gateway for Trino, enabling Power BI DirectQuery"
+license = "OSL-3.0"
+repository = "https://github.com/stackabletech/postgresql-trino-gateway"
+keywords = ["postgresql", "trino", "gateway", "powerbi"]
 
 [dependencies]
-pgwire = { path = "../pgwire" }
+pgwire = "0.38"
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 futures = "0.3"
@@ -13,9 +18,10 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1"
 serde_json = "1"
-trino-rust-client = { path = "../trino-rust-client" }
+trino-rust-client = "0.9"
 serde = { version = "1", features = ["derive"] }
 async-stream = "0.3"
+dashmap = "6"
 sqlparser = { version = "0.61", features = ["visitor"] }
 
 [dev-dependencies]

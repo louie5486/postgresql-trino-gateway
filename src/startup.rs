@@ -1,3 +1,6 @@
+// Copyright 2026 Stackable GmbH
+// Licensed under the Open Software License version 3.0 (OSL-3.0).
+// See LICENSE file in the project root for full license text.
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -15,6 +18,7 @@ use pgwire::messages::{PgWireBackendMessage, PgWireFrontendMessage};
 use trino_rust_client::auth::Auth;
 
 use crate::config::Config;
+use crate::session::{self, ConnectionState};
 
 /// Server parameter provider that returns PostgreSQL-compatible parameters.
 #[derive(Debug)]
@@ -78,8 +82,21 @@ impl StartupHandler for GatewayStartupHandler {
                 } else {
                     // No auth — create Trino client immediately
                     let trino_client = self.build_trino_client(None, None)?;
-                    client.session_extensions().insert(trino_client);
-                    client.session_extensions().insert((*self.config).clone());
+                    let conn_id = format!(
+                        "{}_{}",
+                        client.socket_addr(),
+                        client.pid_and_secret_key().0
+                    );
+                    client
+                        .metadata_mut()
+                        .insert(session::connection_id_key().to_owned(), conn_id.clone());
+                    session::register_connection(
+                        conn_id,
+                        ConnectionState {
+                            trino_client: Arc::new(trino_client),
+                            config: self.config.clone(),
+                        },
+                    );
                     finish_authentication(client, &GatewayParameterProvider).await?;
                     tracing::info!(addr = %client.socket_addr(), "client connected (no auth)");
                 }
@@ -108,8 +125,21 @@ impl StartupHandler for GatewayStartupHandler {
                     return Err(PgWireError::InvalidPassword(user));
                 }
 
-                client.session_extensions().insert(trino_client);
-                client.session_extensions().insert((*self.config).clone());
+                let conn_id = format!(
+                    "{}_{}",
+                    client.socket_addr(),
+                    client.pid_and_secret_key().0
+                );
+                client
+                    .metadata_mut()
+                    .insert(session::connection_id_key().to_owned(), conn_id.clone());
+                session::register_connection(
+                    conn_id,
+                    ConnectionState {
+                        trino_client: Arc::new(trino_client),
+                        config: self.config.clone(),
+                    },
+                );
                 finish_authentication(client, &GatewayParameterProvider).await?;
                 tracing::info!(addr = %client.socket_addr(), user = %user, "client connected");
             }

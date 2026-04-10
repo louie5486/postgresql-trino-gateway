@@ -1,3 +1,6 @@
+// Copyright 2026 Stackable GmbH
+// Licensed under the Open Software License version 3.0 (OSL-3.0).
+// See LICENSE file in the project root for full license text.
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -11,10 +14,9 @@ use pgwire::api::store::PortalStore;
 use pgwire::api::{ClientInfo, ClientPortalStore, Type};
 use pgwire::error::{PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
-use trino_rust_client::Client as TrinoClient;
 
-use crate::config::Config;
 use crate::query_pipeline::process_query;
+use crate::session;
 
 /// Handles the extended query protocol (Parse/Bind/Describe/Execute).
 ///
@@ -53,15 +55,16 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         let query = &portal.statement.statement;
         tracing::debug!(query, "Extended query execute");
 
-        let trino_client: Arc<TrinoClient> = client
-            .session_extensions()
-            .get::<TrinoClient>()
-            .ok_or_else(|| PgWireError::ApiError("No Trino client in session".into()))?;
-
-        let config: Arc<Config> = client
-            .session_extensions()
-            .get::<Config>()
-            .ok_or_else(|| PgWireError::ApiError("No Config in session".into()))?;
+        let conn_id = client
+            .metadata()
+            .get(session::connection_id_key())
+            .ok_or_else(|| PgWireError::ApiError("No connection ID in metadata".into()))?
+            .clone();
+        let conn_state = session::get_connection(&conn_id)
+            .ok_or_else(|| PgWireError::ApiError("Connection state not found".into()))?;
+        let trino_client = Arc::clone(&conn_state.trino_client);
+        let config = Arc::clone(&conn_state.config);
+        drop(conn_state);
 
         let responses = process_query(query, &trino_client, &config).await?;
         responses
@@ -106,15 +109,16 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         let query = &portal.statement.statement;
         tracing::debug!(query, "Extended query describe portal");
 
-        let trino_client: Arc<TrinoClient> = client
-            .session_extensions()
-            .get::<TrinoClient>()
-            .ok_or_else(|| PgWireError::ApiError("No Trino client in session".into()))?;
-
-        let config: Arc<Config> = client
-            .session_extensions()
-            .get::<Config>()
-            .ok_or_else(|| PgWireError::ApiError("No Config in session".into()))?;
+        let conn_id = client
+            .metadata()
+            .get(session::connection_id_key())
+            .ok_or_else(|| PgWireError::ApiError("No connection ID in metadata".into()))?
+            .clone();
+        let conn_state = session::get_connection(&conn_id)
+            .ok_or_else(|| PgWireError::ApiError("Connection state not found".into()))?;
+        let trino_client = Arc::clone(&conn_state.trino_client);
+        let config = Arc::clone(&conn_state.config);
+        drop(conn_state);
 
         let responses = process_query(query, &trino_client, &config).await?;
         let fields = match responses.into_iter().next() {
