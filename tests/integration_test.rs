@@ -255,6 +255,11 @@ async fn test_intercept_queries() {
                 "SELECT current_setting('server_version_num')",
                 Check::Value { value: "160006" },
             ),
+            (
+                "character_sets_utf8",
+                "SELECT character_set_name FROM INFORMATION_SCHEMA.character_sets",
+                Check::Value { value: "UTF8" },
+            ),
         ],
     )
     .await;

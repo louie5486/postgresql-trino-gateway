@@ -74,6 +74,12 @@ pub fn intercept_query(
         return Some(resp);
     }
 
+    // CHARACTER_SETS — Power BI queries this to confirm client encoding.
+    // Real PostgreSQL returns one row: UTF8.
+    if upper.contains("CHARACTER_SETS") {
+        return Some(single_text_response("character_set_name", "UTF8"));
+    }
+
     // information_schema tables that don't exist in Trino — return empty results.
     // Power BI queries these for relationship/constraint discovery.
     if let Some(resp) = intercept_missing_information_schema(&upper, trimmed) {
@@ -95,7 +101,6 @@ fn intercept_missing_information_schema(
         "KEY_COLUMN_USAGE",
         "CONSTRAINT_COLUMN_USAGE",
         "CONSTRAINT_TABLE_USAGE",
-        "CHARACTER_SETS",
         "CHECK_CONSTRAINTS",
     ];
 
