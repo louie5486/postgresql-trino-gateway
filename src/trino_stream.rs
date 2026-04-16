@@ -86,6 +86,7 @@ pub async fn execute_trino_query(
     PgWireError,
 > {
     // 1. Submit query
+    tracing::trace!(trino_sql = %sql, "Trino: submitting query");
     let result = client.get::<Row>(sql).await.map_err(|e| {
         let info = crate::error_mapping::trino_error_to_pg(&e.to_string());
         PgWireError::UserError(Box::new(info))
@@ -133,6 +134,13 @@ pub async fn execute_trino_query(
             None => break,
         }
     }
+
+    tracing::trace!(
+        columns = trino_columns.len(),
+        initial_rows = initial_rows.len(),
+        more_pending = next_uri.is_some(),
+        "Trino: initial response received"
+    );
 
     // 4. Build PG schema (or empty for DDL/DML)
     // When schema is empty, the caller should return Response::Execution instead

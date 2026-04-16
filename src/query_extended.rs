@@ -54,13 +54,14 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
         let query = &portal.statement.statement;
-        tracing::debug!(query, "Extended query execute");
 
         let conn_id = client
             .metadata()
             .get(session::connection_id_key())
             .ok_or_else(|| PgWireError::ApiError("No connection ID in metadata".into()))?
             .clone();
+        tracing::debug!(conn_id = %conn_id, query, "Extended query execute");
+
         let conn_state = session::get_connection(&conn_id)
             .ok_or_else(|| PgWireError::ApiError("Connection state not found".into()))?;
         let trino_client = Arc::clone(&conn_state.trino_client);
@@ -68,10 +69,20 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         drop(conn_state);
 
         let responses = process_query(query, &trino_client, &config).await?;
-        responses
+        let response = responses
             .into_iter()
             .next()
-            .ok_or_else(|| PgWireError::ApiError("Empty pipeline response".into()))
+            .ok_or_else(|| PgWireError::ApiError("Empty pipeline response".into()))?;
+        match &response {
+            pgwire::api::results::Response::Query(qr) => {
+                tracing::trace!(conn_id = %conn_id, columns = qr.row_schema.len(), "Extended query execute: query response");
+            }
+            pgwire::api::results::Response::Execution(_tag) => {
+                tracing::trace!(conn_id = %conn_id, "Extended query execute: execution response");
+            }
+            _ => {}
+        }
+        Ok(response)
     }
 
     // No on_execute override — pgwire's default sends DataRow WITHOUT
@@ -90,6 +101,7 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
+        tracing::trace!(statement = %stmt.statement, "Describe statement");
         let param_types = stmt
             .parameter_types
             .iter()
@@ -113,13 +125,13 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         // This is called by pgjdbc BEFORE Execute, so the client gets
         // RowDescription from here and then DataRow from Execute.
         let query = &portal.statement.statement;
-        tracing::debug!(query, "Extended query describe portal");
 
         let conn_id = client
             .metadata()
             .get(session::connection_id_key())
             .ok_or_else(|| PgWireError::ApiError("No connection ID in metadata".into()))?
             .clone();
+        tracing::debug!(conn_id = %conn_id, query, "Extended query describe portal");
         let conn_state = session::get_connection(&conn_id)
             .ok_or_else(|| PgWireError::ApiError("Connection state not found".into()))?;
         let trino_client = Arc::clone(&conn_state.trino_client);

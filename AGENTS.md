@@ -81,6 +81,25 @@ This gateway runs at highly sensitive customer sites. Security is not optional.
 - **Consistent patterns**: If one catalog handler works a certain way, they all should. If one rewrite visitor has a certain structure, they all should. Inconsistency is a maintenance burden.
 - **Tests as documentation**: A reader should be able to understand the behavior of a module by reading its tests. Test names should describe the scenario, not the implementation.
 
+## Debugging protocol issues
+
+For issues where a client (e.g. Power BI, Npgsql, psql) fails against the gateway but works against real PostgreSQL, enable protocol-level tracing:
+
+```bash
+RUST_LOG=postgresql_trino_gateway=trace cargo run --manifest-path gateway/Cargo.toml -- ...
+```
+
+Trace output shows, per connection:
+- Startup message and auth flow (passwords redacted)
+- Every simple-query and extended-query message with the SQL text
+- Which intercept branch matched (SET, SHOW, pg_catalog, info_schema, …) or whether the query was forwarded to Trino
+- The rewritten SQL sent to Trino (if any rewrite applied)
+- Trino's response shape (column count, row count) — never row contents
+
+Row contents are NEVER logged to avoid leaking customer data. If you need to see values, use a pre-production Trino catalog with synthetic data.
+
+The trace output is structured — pipe through `jq` or grep for `conn_id=` to filter by connection.
+
 ## Conventions
 
 ### Code Style

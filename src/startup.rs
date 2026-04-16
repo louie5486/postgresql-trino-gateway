@@ -79,6 +79,10 @@ impl StartupHandler for GatewayStartupHandler {
     {
         match message {
             PgWireFrontendMessage::Startup(ref startup) => {
+                tracing::trace!(
+                    addr = %client.socket_addr(),
+                    "Startup message received"
+                );
                 protocol_negotiation(client, startup).await?;
                 save_startup_parameters_to_metadata(client, startup);
 
@@ -114,6 +118,10 @@ impl StartupHandler for GatewayStartupHandler {
                 }
             }
             PgWireFrontendMessage::PasswordMessageFamily(pwd) => {
+                tracing::trace!(
+                    addr = %client.socket_addr(),
+                    "Password message received (contents redacted)"
+                );
                 let password = pwd.into_password()?;
                 let user = client.metadata().get("user").cloned().unwrap_or_default();
 

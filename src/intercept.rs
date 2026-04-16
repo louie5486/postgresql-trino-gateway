@@ -46,37 +46,44 @@ pub fn intercept_query(
 
     // SET commands
     if upper.starts_with("SET ") {
+        tracing::trace!(query = trimmed, "Intercept: SET");
         return Some(Ok(vec![Response::Execution(Tag::new("SET"))]));
     }
 
     // Transaction commands
     if let Some(resp) = intercept_transaction(&upper) {
+        tracing::trace!(query = trimmed, "Intercept: transaction");
         return Some(resp);
     }
 
     // DISCARD / DEALLOCATE / CLOSE
     if let Some(resp) = intercept_session_commands(&upper) {
+        tracing::trace!(query = trimmed, "Intercept: session command");
         return Some(resp);
     }
 
     // SHOW commands
     if upper.starts_with("SHOW ") {
+        tracing::trace!(query = trimmed, "Intercept: SHOW");
         return Some(intercept_show(trimmed));
     }
 
     // Server info functions
     if let Some(resp) = intercept_server_functions(&upper, catalog, schema) {
+        tracing::trace!(query = trimmed, "Intercept: server function");
         return Some(resp);
     }
 
     // pg_catalog queries (Npgsql type loading, etc.)
     if let Some(resp) = crate::catalog::handle_catalog_query(trimmed) {
+        tracing::trace!(query = trimmed, "Intercept: pg_catalog");
         return Some(resp);
     }
 
     // CHARACTER_SETS — Power BI queries this to confirm client encoding.
     // Real PostgreSQL returns one row: UTF8.
     if upper.contains("CHARACTER_SETS") {
+        tracing::trace!("Intercept: CHARACTER_SETS");
         return Some(single_text_response("character_set_name", "UTF8"));
     }
 

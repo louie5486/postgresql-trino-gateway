@@ -28,7 +28,7 @@ impl SimpleQueryHandler for GatewayQueryHandler {
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
-        tracing::debug!(query, "Received query");
+        tracing::debug!(query, "Simple query received");
 
         let conn_id = client
             .metadata()
@@ -41,6 +41,15 @@ impl SimpleQueryHandler for GatewayQueryHandler {
         let config = Arc::clone(&conn_state.config);
         drop(conn_state);
 
-        process_query(query, &trino_client, &config).await
+        let result = process_query(query, &trino_client, &config).await;
+        match &result {
+            Ok(responses) => tracing::trace!(
+                conn_id = %conn_id,
+                response_count = responses.len(),
+                "Simple query processed"
+            ),
+            Err(e) => tracing::debug!(conn_id = %conn_id, error = %e, "Simple query failed"),
+        }
+        result
     }
 }

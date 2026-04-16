@@ -17,33 +17,47 @@ pub(crate) async fn process_query(
     trino_client: &Arc<TrinoClient>,
     config: &Arc<Config>,
 ) -> PgWireResult<Vec<Response>> {
+    tracing::trace!(query, "Pipeline: enter");
+
     // Static catalog interception (pg_type, pg_enum, pg_range, pg_namespace, etc.)
     if let Some(result) =
         crate::intercept::intercept_query(query, &config.trino_catalog, &config.trino_schema)
     {
+        tracing::trace!("Pipeline: static intercept matched");
         return result;
     }
 
     // Dynamic catalog interception (pg_class, pg_attribute -- needs Trino client)
     if let Some(result) = crate::catalog::handle_dynamic_catalog_query(query, trino_client).await {
+        tracing::trace!("Pipeline: dynamic catalog matched");
         return result;
     }
 
     // Rewrite INFORMATION_SCHEMA.columns DATA_TYPE to PostgreSQL-style type names.
-    let query = crate::intercept::rewrite_info_schema_columns(query)
+    let rewritten_columns = crate::intercept::rewrite_info_schema_columns(query);
+    if rewritten_columns.is_some() {
+        tracing::trace!("Pipeline: rewrote INFORMATION_SCHEMA.columns");
+    }
+    let query = rewritten_columns
         .map(std::borrow::Cow::Owned)
         .unwrap_or(std::borrow::Cow::Borrowed(query));
     let query: &str = query.as_ref();
 
     let rewritten = crate::rewrite::rewrite_sql(query);
+    if rewritten != query {
+        tracing::trace!(trino_sql = %rewritten, "Pipeline: SQL rewritten for Trino");
+    }
     tracing::debug!(original = query, rewritten = %rewritten, "Rewritten query");
 
     let (schema, row_stream) = execute_trino_query(trino_client, rewritten).await?;
 
     if schema.is_empty() {
+        tracing::trace!("Pipeline: Trino returned no schema — treating as DDL/DML");
         // DDL/DML -- no result set
         Ok(vec![Response::Execution(Tag::new("OK"))])
     } else {
+        let col_names: Vec<&str> = schema.iter().map(|f| f.name()).collect();
+        tracing::trace!(columns = ?col_names, "Pipeline: Trino returned schema");
         Ok(vec![Response::Query(QueryResponse::new(
             schema, row_stream,
         ))])
