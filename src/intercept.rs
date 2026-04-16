@@ -275,7 +275,6 @@ pub(crate) fn rewrite_info_schema_columns(query: &str) -> Option<String> {
     // Only match queries whose primary table is INFORMATION_SCHEMA.COLUMNS.
     if !upper.contains("FROM INFORMATION_SCHEMA.COLUMNS")
         && !upper.contains("FROM INFORMATION_SCHEMA .COLUMNS")
-        && !upper.contains("FROM information_schema.columns")
     {
         return None;
     }
@@ -308,11 +307,10 @@ pub(crate) fn rewrite_info_schema_columns(query: &str) -> Option<String> {
         return Some(format!("{before}{type_mapping} AS DATA_TYPE{after}"));
     }
 
-    // Fallback: wrap the whole query in a subquery with the type mapping.
-    Some(format!(
-        "SELECT COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, {type_mapping} AS DATA_TYPE \
-         FROM ({query}) _col_inner"
-    ))
+    // Query references information_schema.columns but doesn't match the
+    // Power BI CASE WHEN pattern — pass through unchanged so other clients
+    // get unmodified results.
+    None
 }
 
 #[cfg(test)]
