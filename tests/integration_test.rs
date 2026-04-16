@@ -282,6 +282,8 @@ async fn test_show_params() {
         ("is_superuser", "on"),
         ("standard_conforming_strings", "on"),
         ("transaction_isolation", "read committed"),
+        ("in_hot_standby", "off"),
+        ("default_transaction_read_only", "off"),
     ];
 
     for (param, expected) in params {

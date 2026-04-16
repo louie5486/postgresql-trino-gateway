@@ -42,6 +42,12 @@ impl ServerParameterProvider for GatewayParameterProvider {
         params.insert("integer_datetimes".to_owned(), "on".to_owned());
         params.insert("standard_conforming_strings".to_owned(), "on".to_owned());
         params.insert("TimeZone".to_owned(), "UTC".to_owned());
+        params.insert("IntervalStyle".to_owned(), "postgres".to_owned());
+        params.insert("in_hot_standby".to_owned(), "off".to_owned());
+        params.insert("search_path".to_owned(), "\"$user\", public".to_owned());
+        params.insert("is_superuser".to_owned(), "on".to_owned());
+        params.insert("default_transaction_read_only".to_owned(), "off".to_owned());
+        params.insert("application_name".to_owned(), "".to_owned());
         Some(params)
     }
 }

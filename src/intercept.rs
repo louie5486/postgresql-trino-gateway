@@ -218,6 +218,8 @@ fn intercept_show(trimmed: &str) -> PgWireResult<Vec<Response>> {
         "integer_datetimes" => "on",
         "intervalstyle" => "postgres",
         "is_superuser" => "on",
+        "in_hot_standby" => "off",
+        "default_transaction_read_only" => "off",
         _ => "on", // safe default
     };
 
