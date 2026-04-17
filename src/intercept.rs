@@ -156,6 +156,25 @@ fn empty_query_response(query: &str) -> PgWireResult<Vec<Response>> {
     ))])
 }
 
+/// Column name PostgreSQL assigns to an unaliased SELECT item.
+///
+/// PG uses the trailing identifier for simple column refs (`t.col` → `col`),
+/// the function name for function calls, and an empty string otherwise —
+/// which then renders as `?column?`. We preserve this because clients like
+/// Power BI look up result columns by the unqualified name.
+fn unnamed_column_name(expr: &sqlparser::ast::Expr) -> String {
+    use sqlparser::ast::Expr;
+    match expr {
+        Expr::Identifier(id) => id.value.clone(),
+        Expr::CompoundIdentifier(parts) => parts
+            .last()
+            .map(|p| p.value.clone())
+            .unwrap_or_else(|| expr.to_string()),
+        Expr::Function(f) => f.name.to_string(),
+        _ => expr.to_string(),
+    }
+}
+
 /// Extract column names/aliases from a SELECT query.
 /// Falls back to generic column names if parsing fails.
 fn extract_select_columns(query: &str) -> Vec<String> {
@@ -175,7 +194,7 @@ fn extract_select_columns(query: &str) -> Vec<String> {
             .projection
             .iter()
             .map(|item| match item {
-                sqlparser::ast::SelectItem::UnnamedExpr(expr) => expr.to_string(),
+                sqlparser::ast::SelectItem::UnnamedExpr(expr) => unnamed_column_name(expr),
                 sqlparser::ast::SelectItem::ExprWithAlias { alias, .. } => alias.value.clone(),
                 sqlparser::ast::SelectItem::Wildcard(_) => "*".to_string(),
                 sqlparser::ast::SelectItem::QualifiedWildcard(name, _) => {
@@ -441,6 +460,44 @@ mod tests {
         assert_not_intercepted("SELECT * FROM users");
         assert_not_intercepted("INSERT INTO t VALUES (1)");
         assert_not_intercepted("CREATE TABLE t (id INT)");
+    }
+
+    /// Power BI's PK-discovery query has unaliased qualified columns like
+    /// `ii.COLUMN_NAME`. PostgreSQL strips the qualifier in the result's
+    /// RowDescription so the client sees `COLUMN_NAME`. If we return
+    /// `ii.COLUMN_NAME` instead, Power BI's `RetrieveKeysForTable` looks up
+    /// `COLUMN_NAME`, gets null, and throws NullReferenceException.
+    #[test]
+    fn powerbi_index_query_column_names_are_unqualified() {
+        let query = "select i.CONSTRAINT_SCHEMA || '_' || i.CONSTRAINT_NAME as INDEX_NAME, \
+             ii.COLUMN_NAME, ii.ORDINAL_POSITION, \
+             case when i.CONSTRAINT_TYPE = 'PRIMARY KEY' then 'Y' else 'N' end as PRIMARY_KEY \
+             from INFORMATION_SCHEMA.table_constraints i \
+             inner join INFORMATION_SCHEMA.key_column_usage ii \
+                 on i.CONSTRAINT_SCHEMA = ii.CONSTRAINT_SCHEMA \
+             where i.TABLE_SCHEMA = 'sf1' and i.TABLE_NAME = 'nation'";
+
+        let cols = extract_select_columns(query);
+        assert_eq!(
+            cols,
+            vec![
+                "INDEX_NAME",
+                "COLUMN_NAME",
+                "ORDINAL_POSITION",
+                "PRIMARY_KEY"
+            ],
+            "column names must be unqualified to match PostgreSQL behavior"
+        );
+    }
+
+    #[test]
+    fn unnamed_column_name_strips_qualifier() {
+        use sqlparser::ast::{Expr, Ident};
+        let compound = Expr::CompoundIdentifier(vec![Ident::new("ii"), Ident::new("COLUMN_NAME")]);
+        assert_eq!(unnamed_column_name(&compound), "COLUMN_NAME");
+
+        let simple = Expr::Identifier(Ident::new("foo"));
+        assert_eq!(unnamed_column_name(&simple), "foo");
     }
 
     #[test]
