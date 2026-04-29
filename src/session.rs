@@ -40,10 +40,13 @@ pub fn get_connection(
 
 /// Remove every entry whose key has `{addr}_` as a prefix.
 ///
-/// Called from the spawn task after `pgwire::tokio::process_socket` returns,
-/// when we no longer have access to the conn_id but do still have the peer
-/// address from accept(). Source-port-uniqueness of concurrent TCP connections
-/// makes this safe.
+/// Called via a drop guard in the per-connection spawn task so the entry is
+/// removed whether `process_socket` returns Ok, returns Err, or panics. The
+/// `(peer_ip, source_port)` tuple is unique among currently-established TCP
+/// connections, which is what makes the prefix match safe — the kernel will
+/// not reuse a tuple while a connection holding it is still active. After
+/// close, the tuple may sit in TIME_WAIT for tens of seconds before becoming
+/// reusable; cleanup here runs on connection-task exit, well before reuse.
 pub fn remove_connections_for_addr(addr: SocketAddr) {
     let prefix = format!("{addr}_");
     CONNECTIONS.retain(|key, _| !key.starts_with(&prefix));
@@ -74,10 +77,12 @@ mod tests {
         }
     }
 
+    /// Addresses from RFC 5737 documentation ranges so the test won't collide
+    /// with real or future test entries in the global CONNECTIONS map.
     #[test]
     fn remove_by_addr_strips_only_matching_prefix() {
-        let a: SocketAddr = "10.0.0.1:1111".parse().unwrap();
-        let b: SocketAddr = "10.0.0.2:2222".parse().unwrap();
+        let a: SocketAddr = "192.0.2.1:11111".parse().unwrap();
+        let b: SocketAddr = "192.0.2.2:22222".parse().unwrap();
         register_connection(format!("{a}_1"), dummy_state());
         register_connection(format!("{a}_2"), dummy_state());
         register_connection(format!("{b}_1"), dummy_state());
@@ -88,7 +93,6 @@ mod tests {
         assert!(get_connection(&format!("{a}_2")).is_none());
         assert!(get_connection(&format!("{b}_1")).is_some());
 
-        // cleanup
         remove_connections_for_addr(b);
     }
 }

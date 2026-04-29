@@ -40,9 +40,17 @@ async fn main() -> anyhow::Result<()> {
         let factory = factory.clone();
 
         tokio::spawn(async move {
-            let result = pgwire::tokio::process_socket(socket, None, factory).await;
-            session::remove_connections_for_addr(peer_addr);
-            if let Err(e) = result {
+            // Drop guard so the per-connection state is removed even if
+            // process_socket panics or the task is cancelled.
+            struct Cleanup(std::net::SocketAddr);
+            impl Drop for Cleanup {
+                fn drop(&mut self) {
+                    session::remove_connections_for_addr(self.0);
+                }
+            }
+            let _guard = Cleanup(peer_addr);
+
+            if let Err(e) = pgwire::tokio::process_socket(socket, None, factory).await {
                 tracing::error!(error = %e, "connection error");
             }
         });
