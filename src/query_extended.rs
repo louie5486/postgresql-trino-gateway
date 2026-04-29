@@ -16,7 +16,7 @@ use pgwire::error::{PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
 
 use crate::query_pipeline::process_query;
-use crate::session;
+use crate::session::{self, CachedPortalResponse, MAX_CACHED_PORTALS, PortalCache};
 
 /// Handles the extended query protocol (Parse/Bind/Describe/Execute).
 ///
@@ -67,15 +67,21 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         let conn_state = session::get_connection(&conn_id)
             .ok_or_else(|| PgWireError::ApiError("Connection state not found".into()))?;
 
-        // Take the response stashed by do_describe_portal. If present, the
-        // query has already run against Trino — return it directly.
-        let cached = match conn_state.portals.lock() {
-            Ok(mut map) => map.remove(&portal.name),
-            Err(poisoned) => poisoned.into_inner().remove(&portal.name),
-        };
-        if let Some(cached) = cached {
-            tracing::trace!(conn_id = %conn_id, portal = %portal.name, "Extended query execute: served from describe cache");
-            return Ok(cached);
+        // Take any response stashed by do_describe_portal. If the cached
+        // entry was generated for a different statement (the client re-bound
+        // the portal name without an intervening Describe), discard it and
+        // run the pipeline fresh.
+        let cached_entry = take_cached(&conn_state.portals, &portal.name)?;
+        if let Some(entry) = cached_entry {
+            if entry.query == *query {
+                tracing::trace!(conn_id = %conn_id, portal = %portal.name, "Extended query execute: served from describe cache");
+                return Ok(entry.response);
+            }
+            tracing::debug!(
+                conn_id = %conn_id,
+                portal = %portal.name,
+                "Discarding stale describe-cache entry — portal was re-bound"
+            );
         }
 
         let trino_client = Arc::clone(&conn_state.trino_client);
@@ -89,10 +95,19 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
             .ok_or_else(|| PgWireError::ApiError("Empty pipeline response".into()))?;
         match &response {
             Response::Query(qr) => {
-                tracing::trace!(conn_id = %conn_id, columns = qr.row_schema.len(), "Extended query execute: query response (no cache)");
+                tracing::trace!(
+                    conn_id = %conn_id,
+                    portal = %portal.name,
+                    columns = qr.row_schema.len(),
+                    "Extended query execute: query response (no cache)"
+                );
             }
             Response::Execution(_tag) => {
-                tracing::trace!(conn_id = %conn_id, "Extended query execute: execution response (no cache)");
+                tracing::trace!(
+                    conn_id = %conn_id,
+                    portal = %portal.name,
+                    "Extended query execute: execution response (no cache)"
+                );
             }
             _ => {}
         }
@@ -171,17 +186,55 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
             _ => vec![], // DDL/DML — no columns
         };
 
-        // Stash for do_query. Overwrites any stale entry from a prior Bind
-        // on the same portal name without a matching Execute.
-        match portals.lock() {
-            Ok(mut map) => {
-                map.insert(portal.name.clone(), response);
-            }
-            Err(poisoned) => {
-                poisoned.into_inner().insert(portal.name.clone(), response);
-            }
-        }
+        // Stash for do_query. Drops any orphaned entry for this portal name.
+        // Trino-side query state for the dropped Response remains alive until
+        // its server-side TTL — the trino-rust-client doesn't issue a DELETE
+        // on the nextUri when its stream is dropped.
+        // TODO(cancel): wire PG CancelRequest and dropped-cache cleanup to
+        // Trino's `DELETE /v1/statement/{queryId}` so abandoned queries
+        // release Trino resources promptly.
+        insert_cached(
+            &portals,
+            portal.name.clone(),
+            CachedPortalResponse {
+                query: query.clone(),
+                response,
+            },
+        )?;
 
         Ok(DescribePortalResponse::new(fields))
     }
+}
+
+fn take_cached(
+    cache: &PortalCache,
+    name: &str,
+) -> PgWireResult<Option<CachedPortalResponse>> {
+    let mut map = cache
+        .lock()
+        .map_err(|_| PgWireError::ApiError("portal cache mutex poisoned".into()))?;
+    Ok(map.remove(name))
+}
+
+fn insert_cached(
+    cache: &PortalCache,
+    name: String,
+    entry: CachedPortalResponse,
+) -> PgWireResult<()> {
+    let mut map = cache
+        .lock()
+        .map_err(|_| PgWireError::ApiError("portal cache mutex poisoned".into()))?;
+    if map.len() >= MAX_CACHED_PORTALS && !map.contains_key(&name) {
+        // Refuse to grow past the cap. The Response we received is dropped
+        // here; the next Execute on this portal will re-run the pipeline.
+        tracing::warn!(
+            portal = %name,
+            cached = map.len(),
+            cap = MAX_CACHED_PORTALS,
+            "Portal cache full — dropping describe response"
+        );
+        return Ok(());
+    }
+    map.insert(name, entry);
+    Ok(())
 }

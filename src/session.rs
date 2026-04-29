@@ -11,6 +11,17 @@ use trino_rust_client::Client as TrinoClient;
 
 use crate::config::Config;
 
+/// A cached pipeline response keyed by the SQL text it was produced for.
+///
+/// We can't key just on portal name: the PostgreSQL extended protocol allows
+/// a client to re-Bind an existing portal name to a different statement, and
+/// pgwire doesn't expose a Bind hook we could use to invalidate. The query
+/// text is checked at retrieval and the entry is discarded on mismatch.
+pub struct CachedPortalResponse {
+    pub query: String,
+    pub response: Response,
+}
+
 /// Pipeline responses produced by `do_describe_portal` and consumed by
 /// `do_query`, keyed by portal name.
 ///
@@ -18,7 +29,15 @@ use crate::config::Config;
 /// contains a `dyn Stream + Send` that isn't `Sync`. Concurrent access within
 /// one connection isn't required — pgwire processes a connection's messages
 /// serially — so a single mutex is fine.
-pub type PortalCache = Arc<Mutex<HashMap<String, Response>>>;
+pub type PortalCache = Arc<Mutex<HashMap<String, CachedPortalResponse>>>;
+
+/// Maximum number of cached portal responses per connection.
+///
+/// A misbehaving or adversarial client can issue Describe for many distinct
+/// named portals without ever sending Execute, and each cached entry holds a
+/// live Trino query open server-side. Cap the cache so the gateway can't be
+/// pushed into unbounded memory or Trino-side query growth by one connection.
+pub const MAX_CACHED_PORTALS: usize = 64;
 
 /// Per-connection state keyed by `{peer_addr}_{pid}` in `CONNECTIONS`.
 ///
