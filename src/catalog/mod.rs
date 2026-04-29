@@ -13,6 +13,8 @@ use pgwire::api::results::{DataRowEncoder, FieldInfo, QueryResponse, Response};
 use pgwire::error::PgWireResult;
 use trino_rust_client::Client;
 
+use crate::query_inspection::ParsedQuery;
+
 /// Build a QueryResponse from a schema and rows of string values.
 ///
 /// Each row is a `Vec<Option<String>>` where `None` represents SQL NULL.
@@ -43,68 +45,50 @@ fn build_response(
 
 /// Check whether a query targets pg_catalog tables and return a pre-built
 /// static response if so.
-///
-/// Returns `Some(response)` for catalog queries, `None` otherwise.
-pub fn handle_catalog_query(query: &str) -> Option<PgWireResult<Vec<Response>>> {
-    let upper = query.to_uppercase();
-
-    // pg_attribute + pg_type join = composite field lookup
-    if upper.contains("PG_ATTRIBUTE") && upper.contains("PG_TYPE") {
+pub fn handle_catalog_query(inspect: &ParsedQuery) -> Option<PgWireResult<Vec<Response>>> {
+    // pg_attribute + pg_type join = composite field lookup.
+    if inspect.references_table("pg_attribute") && inspect.references_table("pg_type") {
         return Some(stubs::empty_composite_fields());
     }
 
-    // pg_enum (must come before pg_type — the enum query JOINs pg_type)
-    if upper.contains("FROM PG_ENUM") || upper.contains("JOIN PG_ENUM") {
+    // pg_enum must come before pg_type because the enum query joins pg_type.
+    if inspect.references_table("pg_enum") {
         return Some(stubs::empty_enum_labels());
     }
 
-    // pg_type (must come after pg_attribute+pg_type and pg_enum checks)
-    if upper.contains("FROM PG_TYPE")
-        || upper.contains("JOIN PG_TYPE")
-        || upper.contains(".PG_TYPE")
-    {
+    if inspect.references_table("pg_type") {
         return Some(pg_type::respond_type_loading());
     }
 
-    // pg_range
-    if upper.contains("FROM PG_RANGE") {
+    if inspect.references_table("pg_range") {
         return Some(stubs::empty_pg_range());
     }
 
-    // pg_namespace
-    if upper.contains("PG_NAMESPACE") {
+    if inspect.references_table("pg_namespace") {
         return Some(stubs::respond_pg_namespace());
     }
 
     // pg_class and pg_attribute are handled dynamically (need Trino client).
-    // See `handle_dynamic_catalog_query`.
-
     None
 }
 
 /// Check whether a query targets pg_class or pg_attribute and, if so, query
 /// Trino's information_schema to build a real response.
-///
-/// Returns `Some(result)` for dynamic catalog queries, `None` otherwise.
 pub async fn handle_dynamic_catalog_query(
-    query: &str,
+    inspect: &ParsedQuery,
     client: &Arc<Client>,
 ) -> Option<PgWireResult<Vec<Response>>> {
-    let upper = query.to_uppercase();
-
-    // pg_attribute + pg_type join = composite field lookup (stay static)
-    if upper.contains("PG_ATTRIBUTE") && upper.contains("PG_TYPE") {
-        return None; // handled by static intercept
+    // pg_attribute + pg_type join is the composite field lookup; static.
+    if inspect.references_table("pg_attribute") && inspect.references_table("pg_type") {
+        return None;
     }
 
-    // pg_class (matches "FROM pg_class", "FROM pg_catalog.pg_class", "JOIN pg_class", etc.)
-    if upper.contains("PG_CLASS") && (upper.contains("FROM") || upper.contains("JOIN")) {
+    if inspect.references_table("pg_class") {
         tracing::debug!("Dynamic catalog: pg_class");
         return Some(pg_class::respond_pg_class(client).await);
     }
 
-    // pg_attribute (standalone, not the pg_attribute+pg_type join)
-    if upper.contains("PG_ATTRIBUTE") && (upper.contains("FROM") || upper.contains("JOIN")) {
+    if inspect.references_table("pg_attribute") {
         tracing::debug!("Dynamic catalog: pg_attribute");
         return Some(pg_attribute::respond_pg_attribute(client).await);
     }
@@ -116,84 +100,92 @@ pub async fn handle_dynamic_catalog_query(
 mod tests {
     use super::*;
 
+    fn dispatch(sql: &str) -> Option<PgWireResult<Vec<Response>>> {
+        let inspect = ParsedQuery::new(sql);
+        handle_catalog_query(&inspect)
+    }
+
     #[test]
     fn pg_type_detected_from_clause() {
-        let query = "SELECT * FROM pg_type WHERE typname = 'int4'";
-        assert!(handle_catalog_query(query).is_some());
+        assert!(dispatch("SELECT * FROM pg_type WHERE typname = 'int4'").is_some());
     }
 
     #[test]
     fn pg_type_detected_join_clause() {
-        let query = "SELECT t.oid, t.typname FROM pg_catalog.pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace";
-        assert!(handle_catalog_query(query).is_some());
+        let q = "SELECT t.oid, t.typname FROM pg_catalog.pg_type t \
+                 JOIN pg_namespace n ON n.oid = t.typnamespace";
+        assert!(dispatch(q).is_some());
     }
 
     #[test]
     fn pg_type_case_insensitive() {
-        let query = "select * from pg_type";
-        assert!(handle_catalog_query(query).is_some());
+        assert!(dispatch("select * from pg_type").is_some());
     }
 
     #[test]
     fn composite_fields_detected() {
-        let query =
-            "SELECT a.attname, t.typname FROM pg_attribute a JOIN pg_type t ON a.atttypid = t.oid";
-        assert!(handle_catalog_query(query).is_some());
+        let q = "SELECT a.attname, t.typname FROM pg_attribute a \
+                 JOIN pg_type t ON a.atttypid = t.oid";
+        assert!(dispatch(q).is_some());
     }
 
     #[test]
     fn pg_enum_detected() {
-        let query = "SELECT enumlabel FROM pg_enum WHERE enumtypid = 12345";
-        assert!(handle_catalog_query(query).is_some());
+        assert!(dispatch("SELECT enumlabel FROM pg_enum WHERE enumtypid = 12345").is_some());
     }
 
     #[test]
     fn pg_range_detected() {
-        let query = "SELECT * FROM pg_range";
-        assert!(handle_catalog_query(query).is_some());
+        assert!(dispatch("SELECT * FROM pg_range").is_some());
     }
 
     #[test]
     fn pg_namespace_detected() {
-        let query = "SELECT oid, nspname FROM pg_namespace";
-        assert!(handle_catalog_query(query).is_some());
+        assert!(dispatch("SELECT oid, nspname FROM pg_namespace").is_some());
     }
 
+    /// pg_class is handled dynamically (needs Trino client).
     #[test]
     fn pg_class_not_static() {
-        // pg_class is now handled dynamically, not by the static handler.
-        let query = "SELECT * FROM pg_class WHERE relkind = 'r'";
-        assert!(handle_catalog_query(query).is_none());
+        assert!(dispatch("SELECT * FROM pg_class WHERE relkind = 'r'").is_none());
     }
 
+    /// pg_attribute on its own is also dynamic.
     #[test]
     fn pg_attribute_not_static() {
-        // pg_attribute (standalone) is now handled dynamically.
-        let query = "SELECT * FROM pg_attribute WHERE attrelid = 1234";
-        assert!(handle_catalog_query(query).is_none());
+        assert!(dispatch("SELECT * FROM pg_attribute WHERE attrelid = 1234").is_none());
     }
 
     #[test]
     fn regular_query_not_intercepted() {
-        assert!(handle_catalog_query("SELECT 1").is_none());
-        assert!(handle_catalog_query("SELECT * FROM users").is_none());
-        assert!(handle_catalog_query("INSERT INTO t VALUES (1)").is_none());
+        assert!(dispatch("SELECT 1").is_none());
+        assert!(dispatch("SELECT * FROM users").is_none());
+        assert!(dispatch("INSERT INTO t VALUES (1)").is_none());
+    }
+
+    /// Regression: a string literal mentioning a catalog name must not be
+    /// routed to the static stub.
+    #[test]
+    fn literal_with_catalog_name_not_intercepted() {
+        assert!(dispatch("SELECT * FROM users WHERE notes LIKE '%pg_type%'").is_none());
+        assert!(dispatch("SELECT 'pg_type' FROM users").is_none());
+    }
+
+    /// Regression: a column named pg_type must not be routed.
+    #[test]
+    fn column_named_like_catalog_not_intercepted() {
+        assert!(dispatch("SELECT pg_type FROM my_table").is_none());
     }
 
     #[test]
     fn pg_type_response_has_correct_row_count() {
-        let resp = handle_catalog_query("SELECT * FROM pg_type")
-            .unwrap()
-            .unwrap();
+        let resp = dispatch("SELECT * FROM pg_type").unwrap().unwrap();
         assert_eq!(resp.len(), 1);
-        // Verify it built successfully; the row count is validated in pg_type::tests.
     }
 
     #[test]
     fn pg_namespace_returns_three_rows() {
-        let resp = handle_catalog_query("SELECT * FROM pg_namespace")
-            .unwrap()
-            .unwrap();
+        let resp = dispatch("SELECT * FROM pg_namespace").unwrap().unwrap();
         assert_eq!(resp.len(), 1);
     }
 }

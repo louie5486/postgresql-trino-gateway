@@ -8,6 +8,7 @@ use pgwire::error::PgWireResult;
 use trino_rust_client::Client as TrinoClient;
 
 use crate::config::Config;
+use crate::query_inspection::ParsedQuery;
 use crate::trino_stream::execute_trino_query;
 
 /// Core query processing pipeline: intercept -> catalog -> rewrite -> execute.
@@ -19,22 +20,29 @@ pub(crate) async fn process_query(
 ) -> PgWireResult<Vec<Response>> {
     tracing::trace!(query, "Pipeline: enter");
 
+    let inspect = ParsedQuery::new(query);
+
     // Static catalog interception (pg_type, pg_enum, pg_range, pg_namespace, etc.)
-    if let Some(result) =
-        crate::intercept::intercept_query(query, &config.trino_catalog, &config.trino_schema)
-    {
+    if let Some(result) = crate::intercept::intercept_query(
+        query,
+        &inspect,
+        &config.trino_catalog,
+        &config.trino_schema,
+    ) {
         tracing::trace!("Pipeline: static intercept matched");
         return result;
     }
 
     // Dynamic catalog interception (pg_class, pg_attribute -- needs Trino client)
-    if let Some(result) = crate::catalog::handle_dynamic_catalog_query(query, trino_client).await {
+    if let Some(result) =
+        crate::catalog::handle_dynamic_catalog_query(&inspect, trino_client).await
+    {
         tracing::trace!("Pipeline: dynamic catalog matched");
         return result;
     }
 
     // Rewrite INFORMATION_SCHEMA.columns DATA_TYPE to PostgreSQL-style type names.
-    let rewritten_columns = crate::intercept::rewrite_info_schema_columns(query);
+    let rewritten_columns = crate::intercept::rewrite_info_schema_columns(query, &inspect);
     if rewritten_columns.is_some() {
         tracing::trace!("Pipeline: rewrote INFORMATION_SCHEMA.columns");
     }

@@ -8,6 +8,8 @@ use pgwire::api::Type;
 use pgwire::api::results::{DataRowEncoder, FieldFormat, FieldInfo, QueryResponse, Response, Tag};
 use pgwire::error::PgWireResult;
 
+use crate::query_inspection::ParsedQuery;
+
 /// Build a single-column, single-row VARCHAR text response.
 fn single_text_response(column_name: &str, value: &str) -> PgWireResult<Vec<Response>> {
     let fields = Arc::new(vec![FieldInfo::new(
@@ -32,6 +34,7 @@ fn single_text_response(column_name: &str, value: &str) -> PgWireResult<Vec<Resp
 /// Trino. Returns `Some(response)` for intercepted queries, `None` otherwise.
 pub fn intercept_query(
     query: &str,
+    inspect: &ParsedQuery,
     catalog: &str,
     schema: &str,
 ) -> Option<PgWireResult<Vec<Response>>> {
@@ -40,79 +43,75 @@ pub fn intercept_query(
         return None;
     }
 
-    // Remove trailing semicolons for matching.
+    // Remove trailing semicolons for keyword-prefix matching. The AST-based
+    // checks against `inspect` use the original query.
     let trimmed = trimmed.trim_end_matches(';').trim();
     let upper = trimmed.to_uppercase();
 
-    // SET commands
     if upper.starts_with("SET ") {
         tracing::trace!(query = trimmed, "Intercept: SET");
         return Some(Ok(vec![Response::Execution(Tag::new("SET"))]));
     }
 
-    // Transaction commands
     if let Some(resp) = intercept_transaction(&upper) {
         tracing::trace!(query = trimmed, "Intercept: transaction");
         return Some(resp);
     }
 
-    // DISCARD / DEALLOCATE / CLOSE
     if let Some(resp) = intercept_session_commands(&upper) {
         tracing::trace!(query = trimmed, "Intercept: session command");
         return Some(resp);
     }
 
-    // SHOW commands
     if upper.starts_with("SHOW ") {
         tracing::trace!(query = trimmed, "Intercept: SHOW");
         return Some(intercept_show(trimmed));
     }
 
-    // Server info functions
-    if let Some(resp) = intercept_server_functions(&upper, catalog, schema) {
+    if let Some(resp) = intercept_server_functions(inspect, catalog, schema) {
         tracing::trace!(query = trimmed, "Intercept: server function");
         return Some(resp);
     }
 
-    // pg_catalog queries (Npgsql type loading, etc.)
-    if let Some(resp) = crate::catalog::handle_catalog_query(trimmed) {
+    if let Some(resp) = crate::catalog::handle_catalog_query(inspect) {
         tracing::trace!(query = trimmed, "Intercept: pg_catalog");
         return Some(resp);
     }
 
-    // CHARACTER_SETS — Power BI queries this to confirm client encoding.
-    // Real PostgreSQL returns one row: UTF8.
-    if upper.contains("CHARACTER_SETS") {
+    // Power BI confirms its client encoding via INFORMATION_SCHEMA.character_sets;
+    // real PostgreSQL returns one row, "UTF8".
+    if inspect.references_table_in_schema("information_schema", "character_sets") {
         tracing::trace!(query = trimmed, "Intercept: CHARACTER_SETS");
         return Some(single_text_response("character_set_name", "UTF8"));
     }
 
-    // information_schema tables that don't exist in Trino — return empty results.
-    // Power BI queries these for relationship/constraint discovery.
-    if let Some(resp) = intercept_missing_information_schema(&upper, trimmed) {
+    // information_schema tables that don't exist in Trino — empty result with
+    // the right shape so Power BI can finish its constraint discovery.
+    if let Some(resp) = intercept_missing_information_schema(inspect, trimmed) {
         return Some(resp);
     }
 
     None
 }
 
-/// Intercept queries against information_schema tables that Trino doesn't have.
-/// Returns empty result sets so the client proceeds without constraint data.
+/// Intercept queries against information_schema tables that Trino doesn't
+/// expose. Returns empty result sets so the client proceeds without
+/// constraint data.
 fn intercept_missing_information_schema(
-    upper: &str,
+    inspect: &ParsedQuery,
     query: &str,
 ) -> Option<PgWireResult<Vec<Response>>> {
-    let missing_tables = [
-        "REFERENTIAL_CONSTRAINTS",
-        "TABLE_CONSTRAINTS",
-        "KEY_COLUMN_USAGE",
-        "CONSTRAINT_COLUMN_USAGE",
-        "CONSTRAINT_TABLE_USAGE",
-        "CHECK_CONSTRAINTS",
+    const MISSING_TABLES: &[&str] = &[
+        "referential_constraints",
+        "table_constraints",
+        "key_column_usage",
+        "constraint_column_usage",
+        "constraint_table_usage",
+        "check_constraints",
     ];
 
-    for table in &missing_tables {
-        if upper.contains(table) {
+    for table in MISSING_TABLES {
+        if inspect.references_table_in_schema("information_schema", table) {
             tracing::debug!(
                 table,
                 "Intercepting query for missing information_schema table"
@@ -255,35 +254,40 @@ fn intercept_show(trimmed: &str) -> PgWireResult<Vec<Response>> {
 }
 
 fn intercept_server_functions(
-    upper: &str,
+    inspect: &ParsedQuery,
     catalog: &str,
     schema: &str,
 ) -> Option<PgWireResult<Vec<Response>>> {
-    if upper.contains("VERSION()") {
+    if inspect.calls_function("version") {
         return Some(single_text_response(
             "version",
             "PostgreSQL 16.6 on x86_64-pc-linux-gnu, compiled by gcc 12.2.0, 64-bit",
         ));
     }
 
-    if upper.contains("CURRENT_DATABASE()") {
+    if inspect.calls_function("current_database") {
         return Some(single_text_response("current_database", catalog));
     }
 
-    if upper.contains("CURRENT_SCHEMA") {
+    // `current_schema` is the one PostgreSQL niladic that's idiomatically
+    // written without parens. Match the bare-identifier form as well.
+    if inspect.calls_function_or_keyword("current_schema") {
         return Some(single_text_response("current_schema", schema));
     }
 
-    if upper.contains("PG_IS_IN_RECOVERY()") {
+    if inspect.calls_function("pg_is_in_recovery") {
         return Some(single_text_response("pg_is_in_recovery", "false"));
     }
 
-    if upper.contains("CURRENT_SETTING('SERVER_VERSION_NUM')") {
-        return Some(single_text_response("current_setting", "160006"));
-    }
-
-    if upper.contains("CURRENT_SETTING('SERVER_VERSION')") {
-        return Some(single_text_response("current_setting", "16.6"));
+    if let Some(setting) = inspect.function_string_arg("current_setting") {
+        let value = match setting.as_str() {
+            "server_version_num" => Some("160006"),
+            "server_version" => Some("16.6"),
+            _ => None,
+        };
+        if let Some(v) = value {
+            return Some(single_text_response("current_setting", v));
+        }
     }
 
     None
@@ -293,19 +297,18 @@ fn intercept_server_functions(
 /// names into PostgreSQL-style equivalents before forwarding to Trino.
 ///
 /// Power BI sends a query with a `CASE WHEN data_type LIKE '%unsigned%' ...`
-/// expression. We replace that (and simpler bare `data_type` references) with
-/// a Trino CASE WHEN that maps type names like `double` → `double precision`.
+/// expression. We replace it (and simpler bare `data_type` references) with
+/// a Trino CASE WHEN that maps type names like `double` to `double precision`.
 ///
 /// Returns `None` if the query does not target `INFORMATION_SCHEMA.columns`.
-pub(crate) fn rewrite_info_schema_columns(query: &str) -> Option<String> {
-    let upper = query.to_uppercase();
-
-    // Only match queries whose primary table is INFORMATION_SCHEMA.COLUMNS.
-    if !upper.contains("FROM INFORMATION_SCHEMA.COLUMNS")
-        && !upper.contains("FROM INFORMATION_SCHEMA .COLUMNS")
-    {
+pub(crate) fn rewrite_info_schema_columns(
+    query: &str,
+    inspect: &ParsedQuery,
+) -> Option<String> {
+    if !inspect.references_table_in_schema("information_schema", "columns") {
         return None;
     }
+    let upper = query.to_uppercase();
 
     let type_mapping = "\
         CASE \
@@ -345,18 +348,18 @@ pub(crate) fn rewrite_info_schema_columns(query: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Helper: assert that a query is intercepted (returns Some).
     fn assert_intercepted(query: &str) {
+        let inspect = ParsedQuery::new(query);
         assert!(
-            intercept_query(query, "test_catalog", "test_schema").is_some(),
+            intercept_query(query, &inspect, "test_catalog", "test_schema").is_some(),
             "expected query to be intercepted: {query}"
         );
     }
 
-    /// Helper: assert that a query is NOT intercepted (returns None).
     fn assert_not_intercepted(query: &str) {
+        let inspect = ParsedQuery::new(query);
         assert!(
-            intercept_query(query, "test_catalog", "test_schema").is_none(),
+            intercept_query(query, &inspect, "test_catalog", "test_schema").is_none(),
             "expected query to NOT be intercepted: {query}"
         );
     }
@@ -405,7 +408,8 @@ mod tests {
         ];
 
         for &(query, expected) in cases {
-            let result = intercept_query(query, "test_catalog", "test_schema")
+            let inspect = ParsedQuery::new(query);
+            let result = intercept_query(query, &inspect, "test_catalog", "test_schema")
                 .unwrap_or_else(|| panic!("SHOW not intercepted: {query}"));
             // We just verify it returns Ok; the value is embedded inside the
             // encoded DataRow which is opaque here, but at least we confirm
@@ -508,7 +512,8 @@ mod tests {
             where TABLE_SCHEMA = 'sf1' and TABLE_NAME = 'orders' \
             order by TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION";
 
-        let rewritten = rewrite_info_schema_columns(query)
+        let inspect = ParsedQuery::new(query);
+        let rewritten = rewrite_info_schema_columns(query, &inspect)
             .expect("should rewrite Power BI INFORMATION_SCHEMA.columns query");
 
         // Must contain the type-mapping CASE WHEN
@@ -537,22 +542,42 @@ mod tests {
 
     #[test]
     fn rewrite_info_schema_columns_leaves_other_tables_unchanged() {
-        assert!(
-            rewrite_info_schema_columns(
-                "SELECT * FROM INFORMATION_SCHEMA.tables WHERE TABLE_SCHEMA = 'sf1'"
-            )
-            .is_none(),
-            "tables query must not be rewritten"
-        );
+        for q in [
+            "SELECT * FROM INFORMATION_SCHEMA.tables WHERE TABLE_SCHEMA = 'sf1'",
+            "SELECT * FROM pg_type",
+            "SELECT 1",
+        ] {
+            let inspect = ParsedQuery::new(q);
+            assert!(
+                rewrite_info_schema_columns(q, &inspect).is_none(),
+                "should not rewrite: {q}"
+            );
+        }
+    }
 
-        assert!(
-            rewrite_info_schema_columns("SELECT * FROM pg_type").is_none(),
-            "pg_type query must not be rewritten"
-        );
+    /// Regression: a user table named `columns` in a non-information_schema
+    /// must not be intercepted. Previously, `to_uppercase().contains("FROM
+    /// INFORMATION_SCHEMA.COLUMNS")` would falsely match a literal in another
+    /// query, but the new schema-qualified check rejects `mycustom.columns`.
+    #[test]
+    fn rewrite_info_schema_columns_skips_other_schemas() {
+        let q = "SELECT * FROM mycustom.columns";
+        let inspect = ParsedQuery::new(q);
+        assert!(rewrite_info_schema_columns(q, &inspect).is_none());
+    }
 
-        assert!(
-            rewrite_info_schema_columns("SELECT 1").is_none(),
-            "plain query must not be rewritten"
-        );
+    /// Regression: a literal containing `pg_type` must not match the catalog
+    /// dispatch. This is the bug fix that motivated `query_inspection`.
+    #[test]
+    fn user_query_with_pg_type_in_literal_not_intercepted() {
+        assert_not_intercepted("SELECT * FROM customers WHERE notes LIKE '%pg_type%'");
+        assert_not_intercepted("SELECT 'pg_type' AS sentinel");
+    }
+
+    /// Regression: a column named `version` in a SELECT must not trigger the
+    /// version() server-function intercept.
+    #[test]
+    fn user_query_with_version_column_not_intercepted() {
+        assert_not_intercepted("SELECT version FROM releases");
     }
 }
