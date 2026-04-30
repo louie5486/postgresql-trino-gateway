@@ -95,11 +95,22 @@ pub fn classify(config: &Config) -> Result<AuthPosture> {
             return Ok(AuthPosture::DisabledOpenBind);
         }
         bail!(
-            "no --auth on non-loopback bind ({}) is refused by default. \
-             Pass --auth (and --tls-cert/--tls-key for password protection) \
-             or --allow-insecure-listener to opt into unauthenticated network access.",
+            "--auth=false on a non-loopback bind ({}) is not allowed by default. \
+             Either pass --auth (and --tls-cert/--tls-key for password protection) \
+             to require authentication, or pass --allow-insecure-listener to \
+             explicitly allow unauthenticated network access.",
             config.listen_addr
         )
+    }
+
+    // `--allow-insecure-listener` only relaxes the auth-off path. With auth
+    // on it has no effect; warn so an operator who later drops --auth
+    // realises the flag is now actively granting open network access.
+    if config.allow_insecure_listener {
+        tracing::warn!(
+            "--allow-insecure-listener has no effect while --auth is enabled; \
+             remove the flag unless you intend to drop --auth later"
+        );
     }
 
     let has_tls = config.tls_cert.is_some() && config.tls_key.is_some();
@@ -189,6 +200,27 @@ mod tests {
         let mut c = cfg(false, "0.0.0.0:5432", false);
         c.allow_insecure_listener = true;
         assert_eq!(classify(&c).unwrap(), AuthPosture::DisabledOpenBind);
+    }
+
+    /// The opt-in flag must not flip a loopback bind into the open-bind
+    /// posture. The loopback check runs first; the flag is a no-op on
+    /// loopback.
+    #[test]
+    fn allow_insecure_listener_on_loopback_stays_disabled_loopback() {
+        let mut c = cfg(false, "127.0.0.1:5432", false);
+        c.allow_insecure_listener = true;
+        assert_eq!(classify(&c).unwrap(), AuthPosture::DisabledLoopback);
+    }
+
+    /// Setting both `--auth` and `--allow-insecure-listener` is a footgun
+    /// (the flag is silently ignored while auth is on, then activates if
+    /// the operator later drops --auth). `classify` warns but accepts.
+    #[test]
+    fn allow_insecure_listener_with_auth_on_is_accepted_with_warning() {
+        let mut c = cfg(true, "127.0.0.1:5432", true);
+        c.allow_insecure_listener = true;
+        // Warn is logged; classify still returns the auth-driven posture.
+        assert_eq!(classify(&c).unwrap(), AuthPosture::CleartextRequiresTls);
     }
 
     #[test]
