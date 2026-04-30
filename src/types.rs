@@ -4,10 +4,8 @@
 use pgwire::api::Type;
 use serde_json::Value;
 
-/// Maps a Trino type string to the corresponding PostgreSQL `Type`.
-///
-/// Parametric types like `varchar(100)` or `decimal(10,2)` are handled
-/// by stripping the parenthesized parameters before matching.
+/// Parametric types (`varchar(100)`, `decimal(10,2)`) are handled by
+/// stripping the parenthesised parameters before matching the base name.
 pub fn trino_type_to_pg(trino_type: &str) -> Type {
     let normalized = trino_type.trim().to_lowercase();
 
@@ -60,7 +58,6 @@ pub fn trino_type_to_pg(trino_type: &str) -> Type {
     }
 }
 
-/// Maps a scalar PG type to its corresponding array type.
 fn scalar_to_array(scalar: &Type) -> Type {
     match *scalar {
         Type::BOOL => Type::BOOL_ARRAY,

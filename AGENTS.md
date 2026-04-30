@@ -1,124 +1,141 @@
 # PostgreSQL-Trino Gateway
 
-Rust service speaking PostgreSQL wire protocol on the frontend, forwarding queries to Trino's REST API on the backend. Enables Power BI Report Server to use Trino as a DirectQuery source.
+Rust service speaking the PostgreSQL wire protocol on the listening side and
+forwarding queries to Trino's REST API on the backend. Lets PG clients
+(Power BI, Npgsql, psql, JDBC) reach Trino as a DirectQuery source.
 
 ## Architecture
 
-- **pgwire frontend**: Accepts PostgreSQL client connections (psql, Npgsql, Power BI)
-- **Intercept layer**: Handles SET, SHOW, BEGIN/COMMIT, pg_catalog queries locally
-- **SQL rewriter**: Transforms PG-dialect SQL to Trino-compatible SQL (::cast, ILIKE, function names)
-- **Trino backend**: Forwards queries via REST API, streams results back as PG wire protocol rows
-- **Catalog emulation**: Fakes pg_type, pg_class, pg_attribute from Trino's information_schema
+- `pgwire` frontend accepts PG client connections.
+- The intercept layer answers `SET`, `SHOW`, `BEGIN`/`COMMIT`, and
+  `pg_catalog` queries locally; everything else is forwarded.
+- The SQL rewriter transforms PG-dialect SQL to Trino-compatible SQL
+  (`::cast`, `ILIKE`, function-name remaps, type-name normalisation).
+- The Trino backend forwards rewritten queries via the REST API and streams
+  result pages back as PG wire-protocol DataRows.
+- Catalog emulation fakes `pg_type`, `pg_class`, `pg_attribute`, and a few
+  others from Trino's `information_schema`.
 
 ## Project Structure
 
-- `gateway/src/` — main binary crate
-  - `main.rs` — CLI arg parsing, TCP listener
+- `src/` — main binary crate
+  - `main.rs` — CLI parsing, TCP listener, accept loop, graceful shutdown
   - `config.rs` — `Config` struct (clap derive)
-  - `startup.rs` — PG connection startup, server params, Trino client creation
+  - `policy.rs` — startup auth/TLS/listener-policy validation
+  - `startup.rs` — PG startup handler, server params, Trino client construction
+  - `tls.rs` — TLS termination for the listening socket
   - `handler.rs` — `PgWireServerHandlers` factory
   - `query_simple.rs` — simple query protocol handler
-  - `query_extended.rs` — extended query protocol (Parse/Bind/Execute)
-  - `intercept.rs` — SET, SHOW, transaction, server function interception
-  - `catalog/` — pg_catalog emulation (pg_type, pg_class, pg_attribute, stubs)
+  - `query_extended.rs` — extended query protocol (Parse/Bind/Describe/Execute)
+  - `query_pipeline.rs` — shared pipeline; multi-statement splitting
+  - `query_inspection.rs` — AST-based dispatch (`references_table`, `calls_function`)
+  - `intercept.rs` — `SET`, `SHOW`, transaction, server-function interception
+  - `cancel.rs` — PG `CancelRequest` to Trino `DELETE /v1/query/{id}`
+  - `session.rs` — per-connection state, cancel registry, portal cache
+  - `catalog/` — `pg_catalog` emulation (`pg_type`, `pg_class`, `pg_attribute`, stubs)
   - `rewrite/` — SQL rewriting (casts, predicates, functions)
   - `types.rs` — Trino-to-PG type mapping and value encoding
   - `trino_stream.rs` — streaming bridge (poll Trino, yield PG DataRow)
   - `error_mapping.rs` — Trino errors to PG SQLSTATE codes
-- `gateway/tests/integration_test.rs` — data-driven integration tests
+- `tests/integration_test.rs` — data-driven integration tests against real Trino
 
 ## Build & Test
 
 ```bash
-cargo build --manifest-path gateway/Cargo.toml
-cargo test --manifest-path gateway/Cargo.toml                    # unit tests only
-cargo clippy --manifest-path gateway/Cargo.toml                  # lint check
-cargo fmt --manifest-path gateway/Cargo.toml --check             # format check
+cargo build
+cargo test                          # unit tests only
+cargo clippy --all-targets          # lint
+cargo fmt --check                   # format
 
 # With Trino (read-only tests):
 TRINO_HOST=... TRINO_PORT=... TRINO_SSL=true TRINO_TLS_NO_VERIFY=true \
   TRINO_CATALOG=tpch TRINO_SCHEMA=sf1 \
-  cargo test --manifest-path gateway/Cargo.toml
+  cargo test
 
 # With writable catalog (DDL tests):
 ... TRINO_WRITE_CATALOG=memory TRINO_WRITE_SCHEMA=default \
-  cargo test --manifest-path gateway/Cargo.toml
+  cargo test
 ```
 
 ## Quality Rules
 
-These are non-negotiable. Fewer features done well beats more features done poorly.
-
 ### Before every commit
 
-- **Zero warnings**: `cargo build` and `cargo clippy` must produce no warnings. Do not use `#[allow(dead_code)]` to suppress warnings — remove unused code instead.
-- **Formatting**: `cargo fmt --check` must pass.
-- **Tests**: `cargo test` must pass. All new functionality must have tests.
-- **No dead code**: Remove unused fields, methods, imports, and structs rather than suppressing warnings.
+- `cargo build` and `cargo clippy --all-targets` produce no warnings.
+  `#[allow(dead_code)]` is not a fix; remove the unused code.
+- `cargo fmt --check` passes.
+- `cargo test` passes. New functionality has tests.
 
-### Code quality (non-negotiable)
+### Security
 
-- **Readability over cleverness**: This code is written by AI but maintained by humans. Use straightforward, well-known Rust idioms. If a reviewer has to stop and think about what a block of code does, it's too clever. Prefer boring and obvious.
-- **No duplication**: Copying a pattern once is acceptable. Three times means extract a function, trait, or helper. Audit for shared patterns and consolidate them.
-- **Sound architecture**: Every module should have a clear single responsibility. Dependencies flow one way. No circular imports. If you're passing 5+ arguments to a function, consider whether the design is right.
-- **Error messages must be actionable**: Every error a user or operator sees should tell them what went wrong AND what to do about it. "connection refused" is bad. "Failed to connect to Trino at host:port — is Trino running?" is good.
+- No `unwrap()` or `panic!()` in production paths. Tests and proven
+  invariants are exempt; document the invariant with a comment.
+- No SQL injection. The rewriter operates on the AST, never on raw strings,
+  with one documented exception for the Power BI INFORMATION_SCHEMA.columns
+  CASE rewrite (driver-emitted fixed pattern, no user input interpolated).
+- No credential leaks. Passwords, tokens, and connection strings never
+  appear in logs, error messages, or debug output.
+- Input validation at boundaries. Malformed wire-protocol messages must
+  not crash the gateway.
+- Fail closed. On unexpected state, return an error to the client rather
+  than proceeding.
 
-### Security (non-negotiable)
+### Code shape
 
-This gateway runs at highly sensitive customer sites. Security is not optional.
-
-- **No panics in production paths**: Use `Result` and propagate errors. `unwrap()` is only acceptable in tests, static initialization, and cases where the invariant is provably guaranteed. Document why with a comment.
-- **No SQL injection**: Never interpolate user input into SQL strings. Use parameterized queries or properly escape values. The SQL rewriter must not introduce injection vectors.
-- **No credential leaking**: Never log passwords, tokens, or connection strings. Trino credentials must not appear in error messages or debug output.
-- **Input validation at boundaries**: Validate and sanitize all input from PG clients before processing. Malformed wire protocol messages must not crash the gateway.
-- **Fail closed**: If something unexpected happens, return an error to the client rather than proceeding with potentially corrupted state.
-- **Dependency hygiene**: Minimize dependencies. Audit new crates before adding them. Prefer well-maintained, widely-used crates.
-
-### Maintainability (non-negotiable)
-
-- **Self-documenting code**: Names should make comments unnecessary. If you need a comment to explain *what* the code does, rename things. Comments should explain *why*, not *what*.
-- **Small functions**: If a function doesn't fit on one screen, it probably does too much. Extract helpers.
-- **Consistent patterns**: If one catalog handler works a certain way, they all should. If one rewrite visitor has a certain structure, they all should. Inconsistency is a maintenance burden.
-- **Tests as documentation**: A reader should be able to understand the behavior of a module by reading its tests. Test names should describe the scenario, not the implementation.
+- Names carry the meaning. Comments explain *why*, not *what*.
+- Functions fit on a screen.
+- Three near-identical patterns means extract a helper.
+- Catalog handlers and rewriter visitors follow the same structure as
+  their siblings; consistency matters.
 
 ## Debugging protocol issues
 
-For issues where a client (e.g. Power BI, Npgsql, psql) fails against the gateway but works against real PostgreSQL, enable protocol-level tracing:
+For client compatibility issues (Power BI, Npgsql, JDBC, psql failing
+against the gateway but working against real PostgreSQL), enable
+protocol-level tracing:
 
 ```bash
-RUST_LOG=postgresql_trino_gateway=trace cargo run --manifest-path gateway/Cargo.toml -- ...
+RUST_LOG=postgresql_trino_gateway=trace cargo run -- ...
 ```
 
-Trace output shows, per connection:
-- Startup message and auth flow (passwords redacted)
-- Every simple-query and extended-query message with the SQL text
-- Which intercept branch matched (SET, SHOW, pg_catalog, info_schema, …) or whether the query was forwarded to Trino
-- The rewritten SQL sent to Trino (if any rewrite applied)
-- Trino's response shape (column count, row count) — never row contents
+Trace output, per connection:
 
-Row contents are NEVER logged to avoid leaking customer data. If you need to see values, use a pre-production Trino catalog with synthetic data.
+- Startup message and auth flow (passwords redacted).
+- Every simple-query and extended-query message with the SQL text.
+- Which intercept branch matched (`SET`, `SHOW`, `pg_catalog`,
+  `info_schema`, ...) or whether the query was forwarded to Trino.
+- The rewritten SQL sent to Trino, if a rewrite applied.
+- Trino's response shape (column count, row count). Row contents are
+  never logged. If you need to see values, run against a pre-production
+  Trino catalog with synthetic data.
 
-The trace output is structured — pipe through `jq` or grep for `conn_id=` to filter by connection.
+The trace output is structured. Pipe through `jq` or grep for `conn_id=`
+to filter by connection.
 
 ## Conventions
 
-### Code Style
+### Code style
 
-- Services are stored per-connection in pgwire's `SessionExtensions`
-- Use `async_stream::stream!` for streaming bridges
-- Use text wire format (format code 0) for all PG responses
-- Catalog queries return pre-built static responses, not parsed/executed SQL
-- SQL rewriting uses `sqlparser-rs` with `PostgreSqlDialect`, falls back to passthrough on parse failure
-- Integration tests are data-driven: `(name, sql, Check)` tuples with shared fixtures
+- Per-connection state lives in the `session` module's `CONNECTIONS` map
+  until pgwire's `SessionExtensions` ships.
+- Streaming bridges use `async_stream::stream!`.
+- All response columns use text wire format (format code 0).
+- Catalog queries return pre-built static responses; they don't go
+  through `sqlparser`.
+- SQL rewriting uses `sqlparser-rs` with `PostgreSqlDialect` and falls
+  back to passthrough on parse failure.
+- Integration tests are data-driven: `(name, sql, Check)` tuples with
+  shared fixtures.
 
 ### Adding a new intercepted query
 
-1. Add pattern detection in `intercept.rs` (or `catalog/mod.rs` for pg_catalog tables)
-2. Build response using `single_text_response()` or `build_response()` helpers
-3. Add test case to the appropriate test function
+1. Add pattern detection in `intercept.rs` (or `catalog/mod.rs` for
+   `pg_catalog` tables).
+2. Build a response with `single_text_response()` or `build_response()`.
+3. Add a test case to the appropriate test function.
 
 ### Adding a new SQL rewrite
 
-1. Add visitor or AST walking logic in the appropriate `rewrite/` submodule
-2. Add unit test in `rewrite/mod.rs`
-3. Add integration test case in `integration_test.rs`
+1. Add a visitor or AST walker in the appropriate `rewrite/` submodule.
+2. Add a unit test in `rewrite/mod.rs`.
+3. Add an integration-test case in `integration_test.rs`.

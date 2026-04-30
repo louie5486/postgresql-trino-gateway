@@ -9,7 +9,6 @@ use pgwire::error::PgWireResult;
 
 use super::build_response;
 
-/// A single entry in the pg_type catalog.
 struct TypeEntry {
     oid: i32,
     typname: &'static str,

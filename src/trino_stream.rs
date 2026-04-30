@@ -15,7 +15,6 @@ use trino_rust_client::{Client, Row};
 use crate::session::ActiveQueryId;
 use crate::types::{encode_value, trino_type_to_pg};
 
-/// Column metadata from Trino, used for encoding.
 #[derive(Clone)]
 pub(crate) struct TrinoColumn {
     pub(crate) name: String,
@@ -31,7 +30,6 @@ impl From<&Column> for TrinoColumn {
     }
 }
 
-/// Build pgwire FieldInfo schema from Trino columns.
 pub(crate) fn build_pg_schema(columns: &[TrinoColumn]) -> Arc<Vec<FieldInfo>> {
     Arc::new(
         columns
@@ -49,7 +47,6 @@ pub(crate) fn build_pg_schema(columns: &[TrinoColumn]) -> Arc<Vec<FieldInfo>> {
     )
 }
 
-/// Encode one Trino row (slice of serde_json::Value) into a PG DataRow.
 pub(crate) fn encode_row(
     values: &[Value],
     columns: &[TrinoColumn],
@@ -62,19 +59,18 @@ pub(crate) fn encode_row(
     Ok(encoder.take_row())
 }
 
-/// Set the connection's active Trino query id slot. `None` clears it,
-/// matching the "idle connection: cancel is a no-op" contract.
+/// `None` clears the slot, matching the "idle connection: cancel is a
+/// no-op" contract enforced by `cancel::GatewayCancelHandler`.
 fn set_active_query_id(slot: Option<&ActiveQueryId>, id: Option<String>) {
     let Some(slot) = slot else { return };
     match slot.lock() {
         Ok(mut g) => *g = id,
-        // Poison just means a previous holder panicked; the data we're
-        // about to overwrite is irrelevant either way.
+        // Poison means a previous holder panicked; the data we're about
+        // to overwrite is irrelevant either way.
         Err(p) => *p.into_inner() = id,
     }
 }
 
-/// Extract rows from a QueryResultData as Vec<Vec<Value>>.
 fn extract_direct_rows(data: Option<QueryResultData<Row>>) -> Vec<Vec<Value>> {
     match data {
         Some(QueryResultData::Direct(rows)) => {
@@ -101,29 +97,25 @@ pub async fn execute_trino_query(
     ),
     PgWireError,
 > {
-    // 1. Submit query
     tracing::trace!(trino_sql = %sql, "Trino: submitting query");
     let result = client.get::<Row>(sql).await.map_err(|e| {
         let info = crate::error_mapping::trino_error_to_pg(&e.to_string());
         PgWireError::UserError(Box::new(info))
     })?;
 
-    // Record the Trino query id so a concurrent CancelRequest can find it.
-    // We do this before checking for errors so that a query that fails
-    // immediately can still be cancelled while it's being torn down — the
-    // id is non-empty and trino_client.cancel() on a finished query is a
-    // harmless no-op.
+    // Record the query id BEFORE the error check so a query that fails
+    // immediately is still cancellable while being torn down.
+    // trino_client.cancel() on a finished query is a harmless no-op.
     set_active_query_id(active_query_id, Some(result.id.clone()));
 
-    // 2. Check for immediate error
     if let Some(error) = &result.error {
         set_active_query_id(active_query_id, None);
         let info = crate::error_mapping::trino_error_to_pg(&error.message);
         return Err(PgWireError::UserError(Box::new(info)));
     }
 
-    // 3. Extract column metadata — Trino often returns columns: null in the
-    //    initial response. We need to poll nextUri until columns appear.
+    // Trino often returns `columns: null` in the initial response and only
+    // exposes them on the second page; poll nextUri until columns appear.
     let mut trino_columns: Vec<TrinoColumn> = result
         .columns
         .as_ref()
@@ -133,7 +125,6 @@ pub async fn execute_trino_query(
     let mut initial_rows = extract_direct_rows(result.data);
     let mut next_uri = result.next_uri;
 
-    // Poll until we get column metadata or run out of URIs
     while trino_columns.is_empty() {
         match next_uri.take() {
             Some(url) => {
@@ -171,12 +162,10 @@ pub async fn execute_trino_query(
         "Trino: initial response received"
     );
 
-    // 4. Build PG schema (or empty for DDL/DML)
-    // When schema is empty, the caller should return Response::Execution instead
-    // of Response::Query.
+    // Empty schema means DDL/DML; the caller returns Response::Execution
+    // instead of Response::Query.
     let schema = build_pg_schema(&trino_columns);
 
-    // 5. Create streaming bridge
     let stream_client = Arc::clone(client);
     let stream_columns = trino_columns.clone();
     let stream_schema = schema.clone();

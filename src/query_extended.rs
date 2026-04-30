@@ -20,17 +20,19 @@ use crate::session::{self, CachedPortalResponse, MAX_CACHED_PORTALS, PortalCache
 
 /// Handles the extended query protocol (Parse/Bind/Describe/Execute).
 ///
-/// Power BI uses Npgsql 4.0.17 which pipelines multiple Parse/Bind/Describe/Execute
-/// sequences for type loading. We rely on pgwire's default `on_execute` which sends
-/// DataRow WITHOUT RowDescription (`send_describe: false`). Npgsql expects this —
-/// it gets RowDescription from Describe Portal and rejects a second one during Execute
-/// with "Received unexpected backend message RowDescription".
+/// Power BI uses Npgsql 4.0.17, which pipelines multiple
+/// Parse/Bind/Describe/Execute sequences during type loading. We rely on
+/// pgwire's default `on_execute` (which sends DataRow WITHOUT
+/// RowDescription, `send_describe: false`); Npgsql gets the RowDescription
+/// from Describe Portal and rejects a second one during Execute with
+/// "Received unexpected backend message RowDescription".
 ///
-/// `do_describe_portal` runs the query pipeline to obtain the real column schema and
-/// stashes the result in the per-connection `portals` map; `do_query` takes the
-/// stashed response so the query runs against Trino exactly once per Describe+Execute
-/// pair, not twice. Critically this means side-effecting statements (INSERT, UPDATE,
-/// CREATE) issued via prepared statement run only once.
+/// `do_describe_portal` runs the query pipeline to obtain the real column
+/// schema and stashes the result in the per-connection `portals` map;
+/// `do_query` takes the stashed response so the query runs against Trino
+/// exactly once per Describe+Execute pair instead of twice. Critically this
+/// means side-effecting statements (INSERT, UPDATE, CREATE) issued via
+/// prepared statement run only once.
 #[derive(Debug)]
 pub struct GatewayExtendedQueryHandler;
 
@@ -116,10 +118,10 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
         Ok(response)
     }
 
-    // No on_execute override — pgwire's default sends DataRow WITHOUT
-    // RowDescription (send_describe=false), which is correct for Npgsql 4.0.17.
-    // Npgsql gets RowDescription from Describe Portal and expects Execute to
-    // send only DataRow + CommandComplete.
+    // No on_execute override. pgwire's default sends DataRow WITHOUT
+    // RowDescription (send_describe=false), which is what Npgsql 4.0.17
+    // expects: it gets RowDescription from Describe Portal and Execute
+    // should produce only DataRow + CommandComplete.
 
     async fn do_describe_statement<C>(
         &self,

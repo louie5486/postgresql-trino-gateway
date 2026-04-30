@@ -16,7 +16,6 @@ use pgwire::api::query::SimpleQueryHandler;
 use crate::query_pipeline::process_query;
 use crate::session;
 
-/// Handles simple query protocol messages.
 #[derive(Debug)]
 pub struct GatewayQueryHandler;
 

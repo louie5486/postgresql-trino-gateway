@@ -13,7 +13,6 @@ use crate::query_extended::GatewayExtendedQueryHandler;
 use crate::query_simple::GatewayQueryHandler;
 use crate::startup::GatewayStartupHandler;
 
-/// Factory that provides handler implementations to pgwire.
 pub struct GatewayHandlerFactory {
     pub(crate) startup: Arc<GatewayStartupHandler>,
     pub(crate) query: Arc<GatewayQueryHandler>,
