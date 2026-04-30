@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod config;
 pub mod error_mapping;
 pub mod handler;
+pub mod info_schema;
 pub mod intercept;
 pub mod policy;
 pub mod query_extended;

@@ -114,7 +114,7 @@ async fn process_single_statement(
     }
 
     // Rewrite INFORMATION_SCHEMA.columns DATA_TYPE to PostgreSQL-style type names.
-    let rewritten_columns = crate::intercept::rewrite_info_schema_columns(query, &inspect);
+    let rewritten_columns = crate::info_schema::rewrite_info_schema_columns(query, &inspect);
     if rewritten_columns.is_some() {
         tracing::trace!("Pipeline: rewrote INFORMATION_SCHEMA.columns");
     }
