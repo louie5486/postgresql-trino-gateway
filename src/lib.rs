@@ -13,5 +13,6 @@ pub mod query_simple;
 pub mod rewrite;
 pub mod session;
 pub mod startup;
+pub mod tls;
 pub mod trino_stream;
 pub mod types;

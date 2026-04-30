@@ -16,6 +16,7 @@ use postgresql_trino_gateway::query_extended::GatewayExtendedQueryHandler;
 use postgresql_trino_gateway::query_simple::GatewayQueryHandler;
 use postgresql_trino_gateway::session;
 use postgresql_trino_gateway::startup::GatewayStartupHandler;
+use postgresql_trino_gateway::tls;
 
 /// Default shutdown-drain budget. Kept under K8s's default
 /// `terminationGracePeriodSeconds = 30` so the gateway has a chance to abort
@@ -55,12 +56,23 @@ async fn main() -> anyhow::Result<()> {
 
     let drain_timeout = drain_timeout_from_env();
 
+    let tls_acceptor = match (&config.tls_cert, &config.tls_key) {
+        (Some(cert), Some(key)) => {
+            tls::install_default_crypto_provider();
+            Some(tls::build_acceptor(cert, key)?)
+        }
+        // Clap's `requires` enforces both-or-neither; the asymmetric arms
+        // are unreachable but match exhaustively rather than panicking.
+        (None, None) | (Some(_), None) | (None, Some(_)) => None,
+    };
+
     let listener = TcpListener::bind(&config.listen_addr).await?;
     tracing::info!(
         addr = %config.listen_addr,
         version = concat!(env!("CARGO_PKG_VERSION"), "-", env!("BUILD_GIT_HASH")),
         built = env!("BUILD_TIMESTAMP"),
         drain_timeout_secs = drain_timeout.as_secs(),
+        tls = tls_acceptor.is_some(),
         "listening for PostgreSQL connections"
     );
 
@@ -87,9 +99,10 @@ async fn main() -> anyhow::Result<()> {
             accept = listener.accept() => {
                 let (socket, peer_addr) = accept?;
                 let factory = Arc::clone(&factory);
+                let tls = tls_acceptor.clone();
                 tasks.spawn(async move {
                     let _guard = ConnectionCleanup(peer_addr);
-                    if let Err(e) = pgwire::tokio::process_socket(socket, None, factory).await {
+                    if let Err(e) = pgwire::tokio::process_socket(socket, tls, factory).await {
                         tracing::error!(error = %e, "connection error");
                     }
                 });

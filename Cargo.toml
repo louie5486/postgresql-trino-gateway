@@ -23,12 +23,15 @@ serde = { version = "1", features = ["derive"] }
 async-stream = "0.3"
 dashmap = "6"
 sqlparser = { version = "0.61", features = ["visitor"] }
+rustls-pemfile = "2"
+rustls-pki-types = "1"
 
 [build-dependencies]
 chrono = "0.4"
 
 [dev-dependencies]
 tokio-postgres = "0.7"
+tempfile = "3"
 
 [lints.clippy]
 unwrap_in_result = "deny"

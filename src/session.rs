@@ -100,6 +100,8 @@ mod tests {
             trino_client: Arc::new(client),
             config: Arc::new(Config {
                 listen_addr: "127.0.0.1:5432".to_owned(),
+                tls_cert: None,
+                tls_key: None,
                 trino_host: "h".to_owned(),
                 trino_port: 8080,
                 trino_catalog: "c".to_owned(),

@@ -1,6 +1,8 @@
 // Copyright 2026 Stackable GmbH
 // Licensed under the Open Software License version 3.0 (OSL-3.0).
 // See LICENSE file in the project root for full license text.
+use std::path::PathBuf;
+
 use clap::Parser;
 
 /// PostgreSQL-to-Trino gateway configuration.
@@ -12,6 +14,18 @@ pub struct Config {
     /// Address to listen on for PostgreSQL connections.
     #[arg(long, default_value = "127.0.0.1:5432")]
     pub listen_addr: String,
+
+    /// PEM-encoded TLS certificate chain for the listening socket. When set,
+    /// `--tls-key` is also required. Without these flags the gateway speaks
+    /// plaintext PG protocol — acceptable for loopback dev, never for
+    /// network deployment with `--auth`.
+    #[arg(long, requires = "tls_key")]
+    pub tls_cert: Option<PathBuf>,
+
+    /// PEM-encoded TLS private key for the listening socket. PKCS#8, RSA,
+    /// or SEC1 EC keys are supported. Required if `--tls-cert` is set.
+    #[arg(long, requires = "tls_cert")]
+    pub tls_key: Option<PathBuf>,
 
     /// Trino host to connect to.
     #[arg(long, default_value = "localhost")]
