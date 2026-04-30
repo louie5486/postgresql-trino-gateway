@@ -4,12 +4,12 @@
 use std::sync::Arc;
 
 use pgwire::api::Type;
-use pgwire::api::results::{FieldFormat, FieldInfo, Response};
+use pgwire::api::results::Response;
 use pgwire::error::{PgWireError, PgWireResult};
 use trino_rust_client::{Client, Row};
 
-use super::build_response;
 use super::pg_class::table_oid;
+use super::{build_response, text_field};
 use crate::types::trino_type_to_pg;
 
 /// Query Trino's information_schema.columns and return a pg_attribute-compatible response.
@@ -27,48 +27,12 @@ pub async fn respond_pg_attribute(client: &Arc<Client>) -> PgWireResult<Vec<Resp
         .map_err(|e| PgWireError::ApiError(Box::new(e)))?;
 
     let schema = Arc::new(vec![
-        FieldInfo::new(
-            "attrelid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "attname".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "atttypid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "attnum".to_owned(),
-            None,
-            None,
-            Type::INT2,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "attnotnull".to_owned(),
-            None,
-            None,
-            Type::BOOL,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "attisdropped".to_owned(),
-            None,
-            None,
-            Type::BOOL,
-            FieldFormat::Text,
-        ),
+        text_field("attrelid", Type::INT4),
+        text_field("attname", Type::VARCHAR),
+        text_field("atttypid", Type::INT4),
+        text_field("attnum", Type::INT2),
+        text_field("attnotnull", Type::BOOL),
+        text_field("attisdropped", Type::BOOL),
     ]);
 
     let mut rows = Vec::new();

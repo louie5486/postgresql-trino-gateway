@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use pgwire::api::Type;
-use pgwire::api::results::{FieldFormat, FieldInfo, Response};
+use pgwire::api::results::Response;
 use pgwire::error::{PgWireError, PgWireResult};
 use trino_rust_client::{Client, Row};
 
-use super::build_response;
+use super::{build_response, text_field};
 
 /// Starting OID for synthetic table entries (above PostgreSQL's system range).
 const BASE_TABLE_OID: u32 = 16384;
@@ -74,28 +74,10 @@ pub async fn respond_pg_class(client: &Arc<Client>) -> PgWireResult<Vec<Response
         .map_err(|e| PgWireError::ApiError(Box::new(e)))?;
 
     let schema = Arc::new(vec![
-        FieldInfo::new("oid".to_owned(), None, None, Type::INT4, FieldFormat::Text),
-        FieldInfo::new(
-            "relname".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "relnamespace".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "relkind".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
+        text_field("oid", Type::INT4),
+        text_field("relname", Type::VARCHAR),
+        text_field("relnamespace", Type::INT4),
+        text_field("relkind", Type::VARCHAR),
     ]);
 
     let mut rows = Vec::new();

@@ -36,6 +36,28 @@ fn new_pid_and_secret_key() -> (i32, SecretKey) {
     (pid, SecretKey::I32(secret))
 }
 
+/// PostgreSQL-compatible server parameters announced at startup AND
+/// returned by `SHOW <name>`. Single source of truth so the two answers
+/// can't drift.
+pub const SERVER_PARAMS: &[(&str, &str)] = &[
+    ("server_version", "16.6"),
+    ("server_version_num", "160006"),
+    ("server_encoding", "UTF8"),
+    ("client_encoding", "UTF8"),
+    ("DateStyle", "ISO, MDY"),
+    ("integer_datetimes", "on"),
+    ("standard_conforming_strings", "on"),
+    ("TimeZone", "UTC"),
+    ("IntervalStyle", "postgres"),
+    ("in_hot_standby", "off"),
+    ("search_path", "\"$user\", public"),
+    ("is_superuser", "on"),
+    ("default_transaction_read_only", "off"),
+    ("application_name", ""),
+    ("max_identifier_length", "63"),
+    ("transaction_isolation", "read committed"),
+];
+
 /// Server parameter provider that returns PostgreSQL-compatible parameters.
 #[derive(Debug)]
 pub struct GatewayParameterProvider;
@@ -45,21 +67,12 @@ impl ServerParameterProvider for GatewayParameterProvider {
     where
         C: ClientInfo,
     {
-        let mut params = HashMap::new();
-        params.insert("server_version".to_owned(), "16.6".to_owned());
-        params.insert("server_encoding".to_owned(), "UTF8".to_owned());
-        params.insert("client_encoding".to_owned(), "UTF8".to_owned());
-        params.insert("DateStyle".to_owned(), "ISO, MDY".to_owned());
-        params.insert("integer_datetimes".to_owned(), "on".to_owned());
-        params.insert("standard_conforming_strings".to_owned(), "on".to_owned());
-        params.insert("TimeZone".to_owned(), "UTC".to_owned());
-        params.insert("IntervalStyle".to_owned(), "postgres".to_owned());
-        params.insert("in_hot_standby".to_owned(), "off".to_owned());
-        params.insert("search_path".to_owned(), "\"$user\", public".to_owned());
-        params.insert("is_superuser".to_owned(), "on".to_owned());
-        params.insert("default_transaction_read_only".to_owned(), "off".to_owned());
-        params.insert("application_name".to_owned(), "".to_owned());
-        Some(params)
+        Some(
+            SERVER_PARAMS
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        )
     }
 }
 

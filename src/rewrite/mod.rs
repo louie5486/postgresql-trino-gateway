@@ -69,94 +69,103 @@ pub fn rewrite_sql(sql: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_double_colon_cast_rewrite() {
-        let result = rewrite_sql("SELECT $1::text");
-        assert!(result.contains("CAST"), "expected CAST in: {result}");
-        assert!(!result.contains("::"), "unexpected :: in: {result}");
+    /// Each case asserts that the output contains every substring in
+    /// `must_contain` (case-insensitive) and none of the substrings in
+    /// `must_not_contain`.
+    struct Case {
+        name: &'static str,
+        input: &'static str,
+        must_contain: &'static [&'static str],
+        must_not_contain: &'static [&'static str],
     }
 
-    #[test]
-    fn test_type_name_normalization() {
-        let result = rewrite_sql("SELECT CAST(x AS text) FROM t");
-        assert!(
-            result.to_uppercase().contains("VARCHAR"),
-            "expected VARCHAR in: {result}"
-        );
-    }
+    const CASES: &[Case] = &[
+        Case {
+            name: "double-colon cast",
+            input: "SELECT $1::text",
+            must_contain: &["CAST"],
+            must_not_contain: &["::"],
+        },
+        Case {
+            name: "type-name normalisation: text → VARCHAR",
+            input: "SELECT CAST(x AS text) FROM t",
+            must_contain: &["VARCHAR"],
+            must_not_contain: &[],
+        },
+        Case {
+            name: "int4 cast normalises to INTEGER",
+            input: "SELECT $1::int4",
+            must_contain: &["INTEGER"],
+            must_not_contain: &["::"],
+        },
+        Case {
+            name: "ILIKE → lower() LIKE lower()",
+            input: "SELECT * FROM t WHERE name ILIKE '%foo%'",
+            must_contain: &["LOWER"],
+            must_not_contain: &["ILIKE"],
+        },
+        Case {
+            name: "string_agg → listagg",
+            input: "SELECT string_agg(name, ',') FROM t",
+            must_contain: &["listagg"],
+            must_not_contain: &[],
+        },
+        Case {
+            name: "single-arg log → log10",
+            input: "SELECT log(x) FROM t",
+            must_contain: &["log10"],
+            must_not_contain: &[],
+        },
+        Case {
+            name: "two-arg log preserved",
+            input: "SELECT log(2, x) FROM t",
+            must_contain: &[],
+            must_not_contain: &["log10"],
+        },
+        Case {
+            name: "trunc → truncate",
+            input: "SELECT trunc(x) FROM t",
+            must_contain: &["truncate"],
+            must_not_contain: &[],
+        },
+        Case {
+            name: "clean SQL passes through",
+            input: "SELECT id, name FROM t WHERE id = 1",
+            must_contain: &["SELECT", "FROM"],
+            must_not_contain: &[],
+        },
+    ];
 
     #[test]
-    fn test_int_type_normalization() {
-        let result = rewrite_sql("SELECT $1::int4");
-        assert!(
-            result.to_uppercase().contains("INTEGER"),
-            "expected INTEGER in: {result}"
-        );
-        assert!(!result.contains("::"), "unexpected :: in: {result}");
+    fn rewrite_cases() {
+        for case in CASES {
+            let result = rewrite_sql(case.input);
+            let upper = result.to_uppercase();
+            let lower = result.to_lowercase();
+            for needle in case.must_contain {
+                let has = upper.contains(&needle.to_uppercase())
+                    || lower.contains(&needle.to_lowercase());
+                assert!(has, "[{}] expected `{}` in: {result}", case.name, needle);
+            }
+            for needle in case.must_not_contain {
+                let has = upper.contains(&needle.to_uppercase())
+                    || lower.contains(&needle.to_lowercase());
+                assert!(!has, "[{}] unexpected `{}` in: {result}", case.name, needle);
+            }
+        }
     }
 
+    /// `SET ...` doesn't parse via `Parser::parse_statements`; the rewriter
+    /// returns the input unchanged.
     #[test]
-    fn test_ilike_rewrite() {
-        let result = rewrite_sql("SELECT * FROM t WHERE name ILIKE '%foo%'");
-        assert!(
-            result.to_lowercase().contains("lower"),
-            "expected lower() in: {result}"
-        );
-        assert!(
-            !result.to_uppercase().contains("ILIKE"),
-            "unexpected ILIKE in: {result}"
-        );
-    }
-
-    #[test]
-    fn test_function_rename_string_agg() {
-        let result = rewrite_sql("SELECT string_agg(name, ',') FROM t");
-        assert!(result.contains("listagg"), "expected listagg in: {result}");
-    }
-
-    #[test]
-    fn test_function_rename_log() {
-        let result = rewrite_sql("SELECT log(x) FROM t");
-        assert!(result.contains("log10"), "expected log10 in: {result}");
-    }
-
-    #[test]
-    fn test_function_rename_log_two_args_unchanged() {
-        let result = rewrite_sql("SELECT log(2, x) FROM t");
-        assert!(
-            !result.contains("log10"),
-            "two-arg log should not be renamed: {result}"
-        );
-    }
-
-    #[test]
-    fn test_function_rename_trunc() {
-        let result = rewrite_sql("SELECT trunc(x) FROM t");
-        assert!(
-            result.contains("truncate"),
-            "expected truncate in: {result}"
-        );
-    }
-
-    #[test]
-    fn test_passthrough_clean_sql() {
-        let input = "SELECT id, name FROM t WHERE id = 1";
-        let result = rewrite_sql(input);
-        assert!(result.contains("SELECT"), "expected SELECT in: {result}");
-        assert!(result.contains("FROM t"), "expected FROM t in: {result}");
-    }
-
-    #[test]
-    fn test_unparseable_sql_passes_through() {
+    fn unparseable_sql_passes_through() {
         let input = "SET extra_float_digits = 3";
         assert_eq!(rewrite_sql(input), input);
     }
 
     #[test]
-    fn test_show_passes_through() {
-        let input = "SHOW server_version";
-        // Should not panic, should return something (may parse or fall through)
-        let result = rewrite_sql(input);
+    fn show_passes_through_non_empty() {
+        let result = rewrite_sql("SHOW server_version");
         assert!(!result.is_empty());
     }
 }

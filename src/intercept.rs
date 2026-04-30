@@ -5,20 +5,15 @@ use std::sync::Arc;
 
 use futures::stream;
 use pgwire::api::Type;
-use pgwire::api::results::{DataRowEncoder, FieldFormat, FieldInfo, QueryResponse, Response, Tag};
+use pgwire::api::results::{DataRowEncoder, QueryResponse, Response, Tag};
 use pgwire::error::PgWireResult;
 
+use crate::catalog::text_field;
 use crate::query_inspection::ParsedQuery;
 
 /// Build a single-column, single-row VARCHAR text response.
 fn single_text_response(column_name: &str, value: &str) -> PgWireResult<Vec<Response>> {
-    let fields = Arc::new(vec![FieldInfo::new(
-        column_name.to_owned(),
-        None,
-        None,
-        Type::VARCHAR,
-        FieldFormat::Text,
-    )]);
+    let fields = Arc::new(vec![text_field(column_name, Type::VARCHAR)]);
 
     let mut encoder = DataRowEncoder::new(Arc::clone(&fields));
     encoder.encode_field(&value)?;
@@ -142,12 +137,9 @@ fn intercept_missing_information_schema(
 /// typed columns (not just `CommandComplete`), even if it has zero rows.
 /// Reuses the AST already parsed by the pipeline rather than re-parsing.
 fn empty_query_response(inspect: &ParsedQuery) -> PgWireResult<Vec<Response>> {
-    use futures::stream;
-    use pgwire::api::results::{FieldFormat, FieldInfo, QueryResponse};
-
     let mut columns = inspect.select_column_names();
     if columns.is_empty() {
-        // Last-resort fallback when the query failed to parse — give the
+        // Last-resort fallback when the query failed to parse: give the
         // client one column so it can read the (zero-row) result without
         // tripping on an empty RowDescription.
         columns.push("column".to_owned());
@@ -155,16 +147,8 @@ fn empty_query_response(inspect: &ParsedQuery) -> PgWireResult<Vec<Response>> {
 
     let schema = Arc::new(
         columns
-            .into_iter()
-            .map(|name| {
-                FieldInfo::new(
-                    name,
-                    None,
-                    None,
-                    pgwire::api::Type::VARCHAR,
-                    FieldFormat::Text,
-                )
-            })
+            .iter()
+            .map(|name| text_field(name, Type::VARCHAR))
             .collect::<Vec<_>>(),
     );
 
@@ -175,28 +159,12 @@ fn empty_query_response(inspect: &ParsedQuery) -> PgWireResult<Vec<Response>> {
 }
 
 fn intercept_show(trimmed: &str) -> PgWireResult<Vec<Response>> {
-    // Extract the parameter name after SHOW, case-insensitive.
     let param = trimmed[4..].trim().to_lowercase();
-
-    let value = match param.as_str() {
-        "server_version" => "16.6",
-        "server_version_num" => "160006",
-        "server_encoding" => "UTF8",
-        "client_encoding" => "UTF8",
-        "standard_conforming_strings" => "on",
-        "max_identifier_length" => "63",
-        "transaction_isolation" => "read committed",
-        "datestyle" => "ISO, MDY",
-        "timezone" => "UTC",
-        "integer_datetimes" => "on",
-        "intervalstyle" => "postgres",
-        "is_superuser" => "on",
-        "in_hot_standby" => "off",
-        "default_transaction_read_only" => "off",
-        "search_path" => "\"$user\", public",
-        "application_name" => "",
-        _ => "on", // safe default
-    };
+    let value = crate::startup::SERVER_PARAMS
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(&param))
+        .map(|(_, v)| *v)
+        .unwrap_or("on"); // safe default for unknown params
 
     single_text_response(&param, value)
 }
@@ -380,39 +348,24 @@ mod tests {
             let inspect = ParsedQuery::new(query);
             let result = intercept_query(query, &inspect, "test_catalog", "test_schema")
                 .unwrap_or_else(|| panic!("SHOW not intercepted: {query}"));
-            // We just verify it returns Ok; the value is embedded inside the
-            // encoded DataRow which is opaque here, but at least we confirm
-            // the function runs without error.
             assert!(result.is_ok(), "SHOW returned error for: {query}");
 
-            // Also verify via the internal helper directly.
             let trimmed = query.trim().trim_end_matches(';').trim();
             let resp = intercept_show(trimmed).unwrap();
-            // Should have exactly one Response::Query variant.
             assert_eq!(resp.len(), 1);
             match &resp[0] {
-                Response::Query(_) => {} // expected
+                Response::Query(_) => {}
                 other => panic!("expected Query response, got: {other:?}"),
             }
 
-            // Verify the value by re-checking through intercept_show's logic.
+            // Cross-check against SERVER_PARAMS, the single source of truth.
             let param = trimmed[4..].trim().to_lowercase();
-            let value = match param.as_str() {
-                "server_version" => "16.6",
-                "server_version_num" => "160006",
-                "server_encoding" => "UTF8",
-                "client_encoding" => "UTF8",
-                "standard_conforming_strings" => "on",
-                "max_identifier_length" => "63",
-                "transaction_isolation" => "read committed",
-                "datestyle" => "ISO, MDY",
-                "timezone" => "UTC",
-                "integer_datetimes" => "on",
-                "intervalstyle" => "postgres",
-                "is_superuser" => "on",
-                _ => "on",
-            };
-            assert_eq!(value, expected, "mismatch for {query}");
+            let from_table = crate::startup::SERVER_PARAMS
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(&param))
+                .map(|(_, v)| *v)
+                .unwrap_or("on");
+            assert_eq!(from_table, expected, "mismatch for {query}");
         }
     }
 

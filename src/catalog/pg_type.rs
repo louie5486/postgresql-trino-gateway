@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use pgwire::api::Type;
-use pgwire::api::results::{FieldFormat, FieldInfo, Response};
+use pgwire::api::results::{FieldInfo, Response};
 use pgwire::error::PgWireResult;
 
-use super::build_response;
+use super::{build_response, text_field};
 
 struct TypeEntry {
     oid: i32,
@@ -319,50 +319,14 @@ const TYPE_ROW_COUNT: usize = BASE_TYPES.len() + PSEUDO_TYPES.len() + ARRAY_TYPE
 ///          CASE ... END AS type, CASE ... END AS elemoid, CASE ... END AS ord
 fn schema() -> Arc<Vec<FieldInfo>> {
     Arc::new(vec![
-        FieldInfo::new(
-            "nspname".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "typname".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new("oid".to_owned(), None, None, Type::INT4, FieldFormat::Text),
-        FieldInfo::new(
-            "typrelid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "typbasetype".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "type".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "elemoid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new("ord".to_owned(), None, None, Type::INT4, FieldFormat::Text),
+        text_field("nspname", Type::VARCHAR),
+        text_field("typname", Type::VARCHAR),
+        text_field("oid", Type::INT4),
+        text_field("typrelid", Type::INT4),
+        text_field("typbasetype", Type::INT4),
+        text_field("type", Type::VARCHAR),
+        text_field("elemoid", Type::INT4),
+        text_field("ord", Type::INT4),
     ])
 }
 

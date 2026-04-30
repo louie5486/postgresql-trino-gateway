@@ -4,91 +4,48 @@
 use std::sync::Arc;
 
 use pgwire::api::Type;
-use pgwire::api::results::{FieldFormat, FieldInfo, Response};
+use pgwire::api::results::Response;
 use pgwire::error::PgWireResult;
 
-use super::build_response;
+use super::{build_response, text_field};
 
-/// Empty composite fields response (pg_attribute + pg_type join).
-/// Columns: oid (INT4), attname (VARCHAR), atttypid (INT4). Zero rows.
+/// Empty composite-fields response (pg_attribute + pg_type join).
+/// Columns: oid INT4, attname VARCHAR, atttypid INT4. Zero rows.
 pub fn empty_composite_fields() -> PgWireResult<Vec<Response>> {
     let schema = Arc::new(vec![
-        FieldInfo::new("oid".to_owned(), None, None, Type::INT4, FieldFormat::Text),
-        FieldInfo::new(
-            "attname".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "atttypid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
+        text_field("oid", Type::INT4),
+        text_field("attname", Type::VARCHAR),
+        text_field("atttypid", Type::INT4),
     ]);
     build_response(schema, vec![])
 }
 
-/// Empty enum labels response (pg_enum).
-/// Columns: oid (INT4), enumlabel (VARCHAR). Zero rows.
+/// Empty pg_enum response. Columns: oid INT4, enumlabel VARCHAR. Zero rows.
 pub fn empty_enum_labels() -> PgWireResult<Vec<Response>> {
     let schema = Arc::new(vec![
-        FieldInfo::new("oid".to_owned(), None, None, Type::INT4, FieldFormat::Text),
-        FieldInfo::new(
-            "enumlabel".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
+        text_field("oid", Type::INT4),
+        text_field("enumlabel", Type::VARCHAR),
     ]);
     build_response(schema, vec![])
 }
 
 /// Empty pg_range response.
-/// Columns: rngtypid (INT4), rngsubtype (INT4), rngmultitypid (INT4). Zero rows.
+/// Columns: rngtypid INT4, rngsubtype INT4, rngmultitypid INT4. Zero rows.
 pub fn empty_pg_range() -> PgWireResult<Vec<Response>> {
     let schema = Arc::new(vec![
-        FieldInfo::new(
-            "rngtypid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "rngsubtype".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "rngmultitypid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
+        text_field("rngtypid", Type::INT4),
+        text_field("rngsubtype", Type::INT4),
+        text_field("rngmultitypid", Type::INT4),
     ]);
     build_response(schema, vec![])
 }
 
 /// Static pg_namespace response with the three standard namespaces.
-/// Columns: oid (INT4), nspname (VARCHAR). Three rows.
+/// Columns: oid INT4, nspname VARCHAR. Three rows.
 pub fn respond_pg_namespace() -> PgWireResult<Vec<Response>> {
     let schema = Arc::new(vec![
-        FieldInfo::new("oid".to_owned(), None, None, Type::INT4, FieldFormat::Text),
-        FieldInfo::new(
-            "nspname".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
+        text_field("oid", Type::INT4),
+        text_field("nspname", Type::VARCHAR),
     ]);
     let rows = vec![
         vec![Some("11".to_owned()), Some("pg_catalog".to_owned())],

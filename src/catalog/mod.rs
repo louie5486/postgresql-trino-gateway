@@ -9,11 +9,19 @@ mod stubs;
 use std::sync::Arc;
 
 use futures::stream;
-use pgwire::api::results::{DataRowEncoder, FieldInfo, QueryResponse, Response};
+use pgwire::api::Type;
+use pgwire::api::results::{DataRowEncoder, FieldFormat, FieldInfo, QueryResponse, Response};
 use pgwire::error::PgWireResult;
 use trino_rust_client::Client;
 
 use crate::query_inspection::ParsedQuery;
+
+/// Shorthand for the boilerplate that catalog and intercept responses
+/// emit dozens of times: a `FieldInfo` with no table or column oid and
+/// text wire format.
+pub(crate) fn text_field(name: &str, ty: Type) -> FieldInfo {
+    FieldInfo::new(name.to_owned(), None, None, ty, FieldFormat::Text)
+}
 
 /// Build a QueryResponse from a schema and rows of string values.
 ///
