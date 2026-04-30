@@ -29,6 +29,16 @@ use crate::trino_stream::execute_trino_query;
 /// the parser cannot tokenise the SQL (`DISCARD ALL`, dialect-only DDL,
 /// etc.), fall back to processing the original string as one statement —
 /// matching the rewriter's existing parse-failure behaviour.
+///
+/// Cancellation in multi-statement batches: the same `active_query_id`
+/// slot is passed to each statement. As statement N submits to Trino, it
+/// overwrites N-1's id, so a `CancelRequest` always targets the
+/// most-recently-submitted statement — which matches real PostgreSQL's
+/// "cancel the in-progress query" semantics. The streams returned by
+/// earlier statements are consumed by pgwire after `process_query`
+/// returns; cancelling them after later statements have submitted is not
+/// supported, but no documented client (Power BI, pgjdbc) exercises this
+/// path.
 pub(crate) async fn process_query(
     query: &str,
     trino_client: &Arc<TrinoClient>,

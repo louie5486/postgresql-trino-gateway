@@ -62,6 +62,18 @@ pub(crate) fn encode_row(
     Ok(encoder.take_row())
 }
 
+/// Set the connection's active Trino query id slot. `None` clears it,
+/// matching the "idle connection: cancel is a no-op" contract.
+fn set_active_query_id(slot: Option<&ActiveQueryId>, id: Option<String>) {
+    let Some(slot) = slot else { return };
+    match slot.lock() {
+        Ok(mut g) => *g = id,
+        // Poison just means a previous holder panicked; the data we're
+        // about to overwrite is irrelevant either way.
+        Err(p) => *p.into_inner() = id,
+    }
+}
+
 /// Extract rows from a QueryResultData as Vec<Vec<Value>>.
 fn extract_direct_rows(data: Option<QueryResultData<Row>>) -> Vec<Vec<Value>> {
     match data {
@@ -101,15 +113,11 @@ pub async fn execute_trino_query(
     // immediately can still be cancelled while it's being torn down — the
     // id is non-empty and trino_client.cancel() on a finished query is a
     // harmless no-op.
-    if let Some(slot) = active_query_id {
-        match slot.lock() {
-            Ok(mut g) => *g = Some(result.id.clone()),
-            Err(p) => *p.into_inner() = Some(result.id.clone()),
-        }
-    }
+    set_active_query_id(active_query_id, Some(result.id.clone()));
 
     // 2. Check for immediate error
     if let Some(error) = &result.error {
+        set_active_query_id(active_query_id, None);
         let info = crate::error_mapping::trino_error_to_pg(&error.message);
         return Err(PgWireError::UserError(Box::new(info)));
     }
@@ -129,12 +137,17 @@ pub async fn execute_trino_query(
     while trino_columns.is_empty() {
         match next_uri.take() {
             Some(url) => {
-                let next_result = client.get_next::<Row>(&url).await.map_err(|e| {
-                    let info = crate::error_mapping::trino_error_to_pg(&e.to_string());
-                    PgWireError::UserError(Box::new(info))
-                })?;
+                let next_result = match client.get_next::<Row>(&url).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        set_active_query_id(active_query_id, None);
+                        let info = crate::error_mapping::trino_error_to_pg(&e.to_string());
+                        return Err(PgWireError::UserError(Box::new(info)));
+                    }
+                };
 
                 if let Some(error) = &next_result.error {
+                    set_active_query_id(active_query_id, None);
                     let info = crate::error_mapping::trino_error_to_pg(&error.message);
                     return Err(PgWireError::UserError(Box::new(info)));
                 }
@@ -167,8 +180,24 @@ pub async fn execute_trino_query(
     let stream_client = Arc::clone(client);
     let stream_columns = trino_columns.clone();
     let stream_schema = schema.clone();
+    // Clone the slot Arc into the stream closure so we can clear it when
+    // the stream ends naturally, errors, or is dropped.
+    let stream_active_query_id: Option<ActiveQueryId> = active_query_id.cloned();
 
     let row_stream = stream! {
+        // Drop guard clears the slot whether the stream finishes normally,
+        // errors out via `break`, or is dropped by the caller (e.g. when
+        // the connection closes mid-stream). After clearing, a subsequent
+        // CancelRequest on an idle connection sees no active query id and
+        // correctly returns the "idle, ignored" path.
+        struct ClearOnDrop(Option<ActiveQueryId>);
+        impl Drop for ClearOnDrop {
+            fn drop(&mut self) {
+                set_active_query_id(self.0.as_ref(), None);
+            }
+        }
+        let _clear_on_drop = ClearOnDrop(stream_active_query_id);
+
         // Yield initial rows
         for row_values in initial_rows {
             yield encode_row(&row_values, &stream_columns, &stream_schema);
@@ -215,6 +244,22 @@ mod tests {
     use super::*;
     use pgwire::api::Type;
     use serde_json::json;
+
+    #[test]
+    fn set_active_query_id_writes_and_clears() {
+        let slot: ActiveQueryId = Arc::new(std::sync::Mutex::new(None));
+        set_active_query_id(Some(&slot), Some("q-1".to_owned()));
+        assert_eq!(slot.lock().unwrap().as_deref(), Some("q-1"));
+        set_active_query_id(Some(&slot), None);
+        assert!(slot.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn set_active_query_id_with_no_slot_is_a_noop() {
+        // Just must not panic.
+        set_active_query_id(None, Some("ignored".to_owned()));
+        set_active_query_id(None, None);
+    }
 
     #[test]
     fn build_pg_schema_maps_columns() {
