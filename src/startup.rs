@@ -141,7 +141,7 @@ impl StartupHandler for GatewayStartupHandler {
                     let conn_id = format!("{}_{}", client.socket_addr(), pid);
                     client
                         .metadata_mut()
-                        .insert(session::connection_id_key().to_owned(), conn_id.clone());
+                        .insert(session::CONNECTION_ID_KEY.to_owned(), conn_id.clone());
                     session::register_connection(
                         conn_id,
                         ConnectionState {
@@ -195,7 +195,7 @@ impl StartupHandler for GatewayStartupHandler {
                 let conn_id = format!("{}_{}", client.socket_addr(), pid);
                 client
                     .metadata_mut()
-                    .insert(session::connection_id_key().to_owned(), conn_id.clone());
+                    .insert(session::CONNECTION_ID_KEY.to_owned(), conn_id.clone());
                 session::register_connection(
                     conn_id,
                     ConnectionState {

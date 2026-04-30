@@ -53,14 +53,28 @@ pub fn intercept_query(
         return Some(Ok(vec![Response::Execution(Tag::new("SET"))]));
     }
 
-    if let Some(resp) = intercept_transaction(&upper) {
+    // Transaction commands. Trino has no client-managed transactions, so
+    // BEGIN/COMMIT/ROLLBACK are no-op acknowledgements.
+    let txn_tag = if upper == "BEGIN"
+        || upper.starts_with("BEGIN ")
+        || upper.starts_with("START TRANSACTION")
+    {
+        Some("BEGIN")
+    } else if upper == "COMMIT" || upper == "END" {
+        Some("COMMIT")
+    } else if upper == "ROLLBACK" || upper.starts_with("ROLLBACK ") {
+        Some("ROLLBACK")
+    } else {
+        None
+    };
+    if let Some(tag) = txn_tag {
         tracing::trace!(query = trimmed, "Intercept: transaction");
-        return Some(resp);
+        return Some(Ok(vec![Response::Execution(Tag::new(tag))]));
     }
 
-    if let Some(resp) = intercept_session_commands(&upper) {
+    if upper.starts_with("DISCARD ") || upper.starts_with("DEALLOCATE ") || upper == "CLOSE ALL" {
         tracing::trace!(query = trimmed, "Intercept: session command");
-        return Some(resp);
+        return Some(Ok(vec![Response::Execution(Tag::new("OK"))]));
     }
 
     if upper.starts_with("SHOW ") {
@@ -158,26 +172,6 @@ fn empty_query_response(inspect: &ParsedQuery) -> PgWireResult<Vec<Response>> {
         schema,
         stream::empty(),
     ))])
-}
-
-fn intercept_transaction(upper: &str) -> Option<PgWireResult<Vec<Response>>> {
-    if upper == "BEGIN" || upper.starts_with("BEGIN ") || upper.starts_with("START TRANSACTION") {
-        return Some(Ok(vec![Response::Execution(Tag::new("BEGIN"))]));
-    }
-    if upper == "COMMIT" || upper == "END" {
-        return Some(Ok(vec![Response::Execution(Tag::new("COMMIT"))]));
-    }
-    if upper == "ROLLBACK" || upper.starts_with("ROLLBACK ") {
-        return Some(Ok(vec![Response::Execution(Tag::new("ROLLBACK"))]));
-    }
-    None
-}
-
-fn intercept_session_commands(upper: &str) -> Option<PgWireResult<Vec<Response>>> {
-    if upper.starts_with("DISCARD ") || upper.starts_with("DEALLOCATE ") || upper == "CLOSE ALL" {
-        return Some(Ok(vec![Response::Execution(Tag::new("OK"))]));
-    }
-    None
 }
 
 fn intercept_show(trimmed: &str) -> PgWireResult<Vec<Response>> {

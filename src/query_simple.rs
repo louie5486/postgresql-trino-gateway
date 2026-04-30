@@ -31,7 +31,7 @@ impl SimpleQueryHandler for GatewayQueryHandler {
 
         let conn_id = client
             .metadata()
-            .get(session::connection_id_key())
+            .get(session::CONNECTION_ID_KEY)
             .ok_or_else(|| PgWireError::ApiError("No connection ID in metadata".into()))?
             .clone();
         let conn_state = session::get_connection(&conn_id)

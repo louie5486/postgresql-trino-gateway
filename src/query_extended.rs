@@ -61,7 +61,7 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
 
         let conn_id = client
             .metadata()
-            .get(session::connection_id_key())
+            .get(session::CONNECTION_ID_KEY)
             .ok_or_else(|| PgWireError::ApiError("No connection ID in metadata".into()))?
             .clone();
         tracing::debug!(conn_id = %conn_id, query, "Extended query execute");
@@ -160,7 +160,7 @@ impl ExtendedQueryHandler for GatewayExtendedQueryHandler {
 
         let conn_id = client
             .metadata()
-            .get(session::connection_id_key())
+            .get(session::CONNECTION_ID_KEY)
             .ok_or_else(|| PgWireError::ApiError("No connection ID in metadata".into()))?
             .clone();
         tracing::debug!(conn_id = %conn_id, query, "Extended query describe portal");

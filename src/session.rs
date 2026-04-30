@@ -116,12 +116,9 @@ impl Drop for ConnectionState {
 
 static CONNECTIONS: LazyLock<DashMap<String, ConnectionState>> = LazyLock::new(DashMap::new);
 
-const CONNECTION_ID_KEY: &str = "_conn_id";
-
-/// Metadata key under which the conn_id is stored on the pgwire `ClientInfo`.
-pub fn connection_id_key() -> &'static str {
-    CONNECTION_ID_KEY
-}
+/// Metadata key under which each connection stores its `conn_id` on the
+/// pgwire `ClientInfo`.
+pub const CONNECTION_ID_KEY: &str = "_conn_id";
 
 pub fn register_connection(conn_id: String, state: ConnectionState) {
     CONNECTIONS.insert(conn_id, state);

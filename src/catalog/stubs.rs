@@ -101,89 +101,6 @@ pub fn respond_pg_namespace() -> PgWireResult<Vec<Response>> {
     build_response(schema, rows)
 }
 
-/// Empty pg_class response (test-only; production uses pg_class::respond_pg_class).
-/// Columns: oid (INT4), relname (VARCHAR), relnamespace (INT4), relkind (VARCHAR). Zero rows.
-#[cfg(test)]
-pub fn empty_pg_class() -> PgWireResult<Vec<Response>> {
-    let schema = Arc::new(vec![
-        FieldInfo::new("oid".to_owned(), None, None, Type::INT4, FieldFormat::Text),
-        FieldInfo::new(
-            "relname".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "relnamespace".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "relkind".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-    ]);
-    build_response(schema, vec![])
-}
-
-/// Empty pg_attribute response (test-only; production uses pg_attribute::respond_pg_attribute).
-/// Columns: attrelid (INT4), attname (VARCHAR), atttypid (INT4), attnum (INT2),
-///          attnotnull (BOOL), attisdropped (BOOL). Zero rows.
-#[cfg(test)]
-pub fn empty_pg_attribute() -> PgWireResult<Vec<Response>> {
-    let schema = Arc::new(vec![
-        FieldInfo::new(
-            "attrelid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "attname".to_owned(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "atttypid".to_owned(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "attnum".to_owned(),
-            None,
-            None,
-            Type::INT2,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "attnotnull".to_owned(),
-            None,
-            None,
-            Type::BOOL,
-            FieldFormat::Text,
-        ),
-        FieldInfo::new(
-            "attisdropped".to_owned(),
-            None,
-            None,
-            Type::BOOL,
-            FieldFormat::Text,
-        ),
-    ]);
-    build_response(schema, vec![])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,7 +116,5 @@ mod tests {
         empty_composite_fields().unwrap();
         empty_enum_labels().unwrap();
         empty_pg_range().unwrap();
-        empty_pg_class().unwrap();
-        empty_pg_attribute().unwrap();
     }
 }
