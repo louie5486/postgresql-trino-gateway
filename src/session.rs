@@ -110,6 +110,7 @@ mod tests {
                 trino_ssl: false,
                 trino_ssl_insecure: false,
                 auth: false,
+                allow_insecure_listener: false,
             }),
             portals: Arc::new(Mutex::new(HashMap::new())),
         }

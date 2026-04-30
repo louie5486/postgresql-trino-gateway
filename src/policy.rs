@@ -35,9 +35,15 @@ use crate::config::Config;
 /// is in effect; see `startup.rs`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum AuthPosture {
-    /// `--auth` is off. The gateway connects to Trino with `--trino-user`
-    /// and no per-client credentials.
-    Disabled,
+    /// `--auth` is off and the listener is loopback. The gateway connects
+    /// to Trino with `--trino-user` and no per-client credentials. Safe
+    /// for local development.
+    DisabledLoopback,
+    /// `--auth` is off, the listener is non-loopback, and the operator
+    /// explicitly set `--allow-insecure-listener`. Every network-reachable
+    /// client gets unauthenticated access; only acceptable when Trino
+    /// itself authenticates or the network is otherwise trusted.
+    DisabledOpenBind,
     /// `--auth` is on and TLS is configured. The startup handler refuses
     /// plaintext clients on this posture.
     CleartextRequiresTls,
@@ -52,7 +58,15 @@ pub enum AuthPosture {
 pub fn validate(config: &Config) -> Result<AuthPosture> {
     let posture = classify(config)?;
     match posture {
-        AuthPosture::Disabled => {} // default state, no log line needed
+        AuthPosture::DisabledLoopback => {} // default safe state, no log noise
+        AuthPosture::DisabledOpenBind => {
+            tracing::warn!(
+                addr = %config.listen_addr,
+                "auth disabled on a non-loopback bind — every network-reachable \
+                 client gets unauthenticated access to Trino as --trino-user. \
+                 This was opted into via --allow-insecure-listener."
+            );
+        }
         AuthPosture::CleartextRequiresTls => {
             tracing::info!(
                 "auth enabled — cleartext password over TLS \
@@ -74,7 +88,18 @@ pub fn validate(config: &Config) -> Result<AuthPosture> {
 /// without a tracing subscriber.
 pub fn classify(config: &Config) -> Result<AuthPosture> {
     if !config.auth {
-        return Ok(AuthPosture::Disabled);
+        if listen_addr_is_loopback(&config.listen_addr)? {
+            return Ok(AuthPosture::DisabledLoopback);
+        }
+        if config.allow_insecure_listener {
+            return Ok(AuthPosture::DisabledOpenBind);
+        }
+        bail!(
+            "no --auth on non-loopback bind ({}) is refused by default. \
+             Pass --auth (and --tls-cert/--tls-key for password protection) \
+             or --allow-insecure-listener to opt into unauthenticated network access.",
+            config.listen_addr
+        )
     }
 
     let has_tls = config.tls_cert.is_some() && config.tls_key.is_some();
@@ -132,19 +157,38 @@ mod tests {
             trino_ssl: false,
             trino_ssl_insecure: false,
             auth,
+            allow_insecure_listener: false,
         }
     }
 
     #[test]
-    fn auth_disabled_is_always_ok() {
-        assert_eq!(
-            classify(&cfg(false, "0.0.0.0:5432", false)).unwrap(),
-            AuthPosture::Disabled
-        );
+    fn auth_disabled_on_loopback_is_ok() {
         assert_eq!(
             classify(&cfg(false, "127.0.0.1:5432", false)).unwrap(),
-            AuthPosture::Disabled
+            AuthPosture::DisabledLoopback
         );
+        assert_eq!(
+            classify(&cfg(false, "[::1]:5432", false)).unwrap(),
+            AuthPosture::DisabledLoopback
+        );
+    }
+
+    #[test]
+    fn auth_disabled_on_non_loopback_is_refused_without_opt_in() {
+        let err = classify(&cfg(false, "0.0.0.0:5432", false)).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("--allow-insecure-listener"),
+            "must mention the opt-in flag: {msg}"
+        );
+        assert!(msg.contains("0.0.0.0:5432"), "echo bind addr: {msg}");
+    }
+
+    #[test]
+    fn auth_disabled_on_non_loopback_passes_with_opt_in() {
+        let mut c = cfg(false, "0.0.0.0:5432", false);
+        c.allow_insecure_listener = true;
+        assert_eq!(classify(&c).unwrap(), AuthPosture::DisabledOpenBind);
     }
 
     #[test]
@@ -232,14 +276,13 @@ mod tests {
         assert!(classify(&c).is_err());
     }
 
-    /// Disabled posture skips listen-addr validation by design — without
-    /// auth, there are no credentials to protect. `TcpListener::bind` will
-    /// surface its own error if the address is unusable.
+    /// Disabled posture now validates listen-addr (it must be loopback or
+    /// opted in via --allow-insecure-listener), so an unparseable address
+    /// surfaces an error here.
     #[test]
-    fn auth_disabled_does_not_validate_listen_addr() {
-        assert_eq!(
-            classify(&cfg(false, "garbage", false)).unwrap(),
-            AuthPosture::Disabled
-        );
+    fn auth_disabled_with_unparseable_addr_surfaces_error() {
+        let err = classify(&cfg(false, "garbage", false)).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("invalid --listen-addr") || msg.contains("garbage"));
     }
 }

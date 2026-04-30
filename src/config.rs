@@ -61,4 +61,13 @@ pub struct Config {
     /// When disabled, connects to Trino with the --trino-user and no password.
     #[arg(long, default_value_t = false)]
     pub auth: bool,
+
+    /// Acknowledge that the gateway should accept unauthenticated PG
+    /// connections on a non-loopback listen address. Without this flag,
+    /// `--auth=false` is allowed only on loopback binds; with this flag,
+    /// every network-reachable client gets unauthenticated access to
+    /// Trino as `--trino-user`. Use only when Trino itself enforces
+    /// authentication or the network is otherwise trusted.
+    #[arg(long, default_value_t = false)]
+    pub allow_insecure_listener: bool,
 }
