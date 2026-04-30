@@ -80,14 +80,19 @@ fn extract_rows(messages: Vec<SimpleQueryMessage>) -> Vec<tokio_postgres::Simple
 fn test_config() -> Config {
     Config {
         listen_addr: "127.0.0.1:0".to_string(),
+        tls_cert: None,
+        tls_key: None,
         trino_host: "localhost".to_string(),
         trino_port: 8080,
         trino_catalog: "memory".to_string(),
         trino_schema: "default".to_string(),
         trino_user: "trino".to_string(),
         trino_ssl: false,
-        trino_ssl_insecure: false,
+        trino_tls_no_verify: false,
+        trino_allow_plaintext_auth: false,
         auth: false,
+        allow_insecure_listener: false,
+        max_connections: 256,
     }
 }
 
@@ -102,14 +107,19 @@ fn trino_config() -> Option<Config> {
     let schema = std::env::var("TRINO_SCHEMA").unwrap_or_else(|_| "sf1".to_string());
     Some(Config {
         listen_addr: "127.0.0.1:0".to_string(),
+        tls_cert: None,
+        tls_key: None,
         trino_host: host,
         trino_port: port,
         trino_catalog: catalog,
         trino_schema: schema,
         trino_user: "trino".to_string(),
         trino_ssl: ssl,
-        trino_ssl_insecure: ssl_insecure,
+        trino_tls_no_verify: ssl_insecure,
+        trino_allow_plaintext_auth: false,
         auth: false,
+        allow_insecure_listener: false,
+        max_connections: 256,
     })
 }
 

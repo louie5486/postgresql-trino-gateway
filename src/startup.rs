@@ -224,7 +224,7 @@ impl GatewayStartupHandler {
         if self.config.trino_ssl {
             builder = builder.secure(true);
         }
-        if self.config.trino_ssl_insecure {
+        if self.config.trino_tls_no_verify {
             builder = builder.no_verify(true);
         }
 
@@ -232,7 +232,7 @@ impl GatewayStartupHandler {
         if let Some(pw) = password {
             builder = builder
                 .auth(Auth::new_basic(trino_user, Some(pw)))
-                .auth_http_insecure(self.config.trino_ssl_insecure);
+                .auth_http_insecure(self.config.trino_allow_plaintext_auth);
         }
 
         builder

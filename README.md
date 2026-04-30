@@ -39,7 +39,7 @@ export TRINO_SCHEMA=sf1
     --listen-addr 0.0.0.0:15432 \
     --trino-host your-trino-host \
     --trino-port 8443 \
-    --trino-ssl --trino-ssl-insecure \
+    --trino-ssl --trino-tls-no-verify \
     --trino-catalog tpch \
     --trino-schema sf1
 ```
@@ -67,8 +67,13 @@ All options can be passed as CLI flags or set via environment variables in `star
 | `--trino-schema` | `default` | Default Trino schema |
 | `--trino-user` | `trino` | Trino user (used when --auth is disabled) |
 | `--trino-ssl` | off | Use HTTPS to connect to Trino |
-| `--trino-ssl-insecure` | off | Skip TLS certificate verification (self-signed certs) |
+| `--trino-tls-no-verify` | off | Skip TLS certificate verification on the Trino connection (self-signed certs) |
+| `--trino-allow-plaintext-auth` | off | Permit forwarding the client's password to Trino over plain HTTP (required when `--auth` is on and `--trino-ssl` is off) |
 | `--auth` | off | Require password authentication from clients (forwarded to Trino as Basic auth) |
+| `--allow-insecure-listener` | off | Permit `--auth=false` on a non-loopback bind |
+| `--max-connections` | `256` | Cap on concurrent PG client connections |
+| `--tls-cert` | none | PEM cert chain for the gateway's TLS listener (requires `--tls-key`) |
+| `--tls-key` | none | PEM private key for the gateway's TLS listener (requires `--tls-cert`) |
 
 ### Logging
 

@@ -52,9 +52,19 @@ pub struct Config {
     #[arg(long, default_value_t = false)]
     pub trino_ssl: bool,
 
-    /// Skip TLS certificate verification (for self-signed certs).
+    /// Skip TLS certificate-chain and hostname verification on the Trino
+    /// connection. Useful with self-signed certs in a trusted network.
+    /// Only meaningful with `--trino-ssl`.
     #[arg(long, default_value_t = false)]
-    pub trino_ssl_insecure: bool,
+    pub trino_tls_no_verify: bool,
+
+    /// Allow forwarding the PG client's password to Trino over plain
+    /// HTTP. Required when `--auth` is on and Trino is reached over HTTP
+    /// (`--trino-ssl=false`); without it the Trino client refuses to send
+    /// credentials. The password crosses the network in cleartext, so use
+    /// only with a loopback or otherwise-trusted Trino endpoint.
+    #[arg(long, default_value_t = false)]
+    pub trino_allow_plaintext_auth: bool,
 
     /// Require password authentication from PG clients.
     /// Credentials are forwarded to Trino as HTTP Basic auth.

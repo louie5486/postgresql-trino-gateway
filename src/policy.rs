@@ -52,11 +52,12 @@ pub enum AuthPosture {
     CleartextLoopback,
 }
 
-/// Validate the gateway's security policy and emit a startup log line. The
+/// Validate the gateway's security policy and emit startup log lines. The
 /// returned `AuthPosture` is informational; the `Err` arm is the only
 /// blocking outcome.
 pub fn validate(config: &Config) -> Result<AuthPosture> {
     let posture = classify(config)?;
+    validate_trino_posture(config)?;
     match posture {
         AuthPosture::DisabledLoopback => {} // default safe state, no log noise
         AuthPosture::DisabledOpenBind => {
@@ -129,6 +130,49 @@ pub fn classify(config: &Config) -> Result<AuthPosture> {
     )
 }
 
+/// Check the Trino-side TLS / auth-forwarding posture and emit warnings
+/// for each insecure knob. Refuses the one combination that would only
+/// surface as a per-connection runtime error: `--auth` on with Trino
+/// over plain HTTP and `--trino-allow-plaintext-auth` not set.
+pub fn validate_trino_posture(config: &Config) -> Result<()> {
+    if config.trino_tls_no_verify {
+        if !config.trino_ssl {
+            tracing::warn!(
+                "--trino-tls-no-verify has no effect without --trino-ssl; remove the flag"
+            );
+        } else {
+            tracing::warn!(
+                "Trino TLS certificate verification is disabled — \
+                 server identity is not authenticated. Use only on trusted networks \
+                 with self-signed certs."
+            );
+        }
+    }
+    if config.trino_allow_plaintext_auth {
+        if config.trino_ssl {
+            tracing::warn!(
+                "--trino-allow-plaintext-auth has no effect with --trino-ssl; \
+                 credentials are sent over the TLS connection regardless"
+            );
+        } else if config.auth {
+            tracing::warn!(
+                trino_host = %config.trino_host,
+                "forwarding client passwords to Trino over plain HTTP. \
+                 Use only with a loopback or otherwise-trusted Trino endpoint."
+            );
+        }
+    }
+    if config.auth && !config.trino_ssl && !config.trino_allow_plaintext_auth {
+        bail!(
+            "--auth requires either --trino-ssl (HTTPS to Trino) or \
+             --trino-allow-plaintext-auth (forward credentials over plain HTTP). \
+             Without one, the Trino client will refuse to send the password and \
+             every authenticated PG connection will fail."
+        );
+    }
+    Ok(())
+}
+
 /// Return true iff every address that `addr` resolves to is a loopback IP.
 ///
 /// We accept hostname forms like `localhost:5432` because `TcpListener::bind`
@@ -165,8 +209,9 @@ mod tests {
             trino_catalog: "c".to_owned(),
             trino_schema: "s".to_owned(),
             trino_user: "u".to_owned(),
-            trino_ssl: false,
-            trino_ssl_insecure: false,
+            trino_ssl: true, // safe default; tests that need plain HTTP override
+            trino_tls_no_verify: false,
+            trino_allow_plaintext_auth: false,
             auth,
             allow_insecure_listener: false,
             max_connections: 256,
@@ -317,5 +362,70 @@ mod tests {
         let err = classify(&cfg(false, "garbage", false)).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("invalid --listen-addr") || msg.contains("garbage"));
+    }
+
+    // -- validate_trino_posture --
+
+    #[test]
+    fn trino_posture_default_https_is_ok() {
+        let c = cfg(true, "127.0.0.1:5432", false);
+        assert!(validate_trino_posture(&c).is_ok());
+    }
+
+    /// Auth on + Trino HTTP + no plaintext-auth opt-in: the trino client
+    /// would refuse to send the password and every authenticated PG
+    /// connection would fail. Surface that at startup.
+    #[test]
+    fn trino_posture_auth_over_http_without_opt_in_is_refused() {
+        let mut c = cfg(true, "127.0.0.1:5432", false);
+        c.trino_ssl = false;
+        let err = validate_trino_posture(&c).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("--trino-ssl") && msg.contains("--trino-allow-plaintext-auth"),
+            "should mention both escape hatches: {msg}"
+        );
+    }
+
+    #[test]
+    fn trino_posture_auth_over_http_with_opt_in_passes() {
+        let mut c = cfg(true, "127.0.0.1:5432", false);
+        c.trino_ssl = false;
+        c.trino_allow_plaintext_auth = true;
+        assert!(validate_trino_posture(&c).is_ok());
+    }
+
+    /// Tls-no-verify with auth disabled and Trino over HTTPS: warn but
+    /// pass. The flag is a useful self-signed-cert escape hatch.
+    #[test]
+    fn trino_posture_tls_no_verify_with_https_passes() {
+        let mut c = cfg(false, "127.0.0.1:5432", false);
+        c.trino_tls_no_verify = true;
+        assert!(validate_trino_posture(&c).is_ok());
+    }
+
+    /// Tls-no-verify without --trino-ssl is a no-op flag — warn but pass.
+    /// The flag has no effect because verification only runs over TLS.
+    #[test]
+    fn trino_posture_tls_no_verify_without_ssl_is_a_noop() {
+        let mut c = cfg(false, "127.0.0.1:5432", false);
+        c.trino_ssl = false;
+        c.trino_tls_no_verify = true;
+        c.trino_allow_plaintext_auth = false; // no auth so bail doesn't fire
+        // auth is off here (cfg(false, ...)) so the auth+http refusal
+        // doesn't apply; the no-verify-without-ssl warn fires.
+        assert!(validate_trino_posture(&c).is_ok());
+    }
+
+    /// Plaintext-auth flag set without --auth is a no-op — Trino sees no
+    /// password to forward. Warn (handled in the with-ssl branch) but
+    /// pass.
+    #[test]
+    fn trino_posture_plaintext_auth_with_https_is_a_noop() {
+        let mut c = cfg(true, "127.0.0.1:5432", true);
+        c.trino_allow_plaintext_auth = true;
+        // With trino_ssl=true the plaintext-auth flag is irrelevant; warn,
+        // but no error.
+        assert!(validate_trino_posture(&c).is_ok());
     }
 }

@@ -11,7 +11,7 @@ TRINO_SCHEMA="${TRINO_SCHEMA:-sf1}"
 LOG_LEVEL="${RUST_LOG:-postgresql_trino_gateway=info}"
 
 # Optional flags (set to empty string to disable)
-SSL_FLAGS="${SSL_FLAGS:---trino-ssl --trino-ssl-insecure}"
+SSL_FLAGS="${SSL_FLAGS:---trino-ssl --trino-tls-no-verify}"
 AUTH_FLAG="${AUTH_FLAG:-}"  # Set to "--auth" to require passwords
 
 BINARY="./target/release/postgresql-trino-gateway"
