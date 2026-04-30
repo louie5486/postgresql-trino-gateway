@@ -12,6 +12,7 @@ use tokio::task::JoinSet;
 
 use postgresql_trino_gateway::config::Config;
 use postgresql_trino_gateway::handler::GatewayHandlerFactory;
+use postgresql_trino_gateway::policy;
 use postgresql_trino_gateway::query_extended::GatewayExtendedQueryHandler;
 use postgresql_trino_gateway::query_simple::GatewayQueryHandler;
 use postgresql_trino_gateway::session;
@@ -45,6 +46,10 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let config = Arc::new(Config::parse());
+
+    // Refuse to start with a configuration that would cross the network
+    // with cleartext credentials. Logs the chosen posture as a side effect.
+    policy::validate(&config)?;
 
     let factory = Arc::new(GatewayHandlerFactory::new(
         Arc::new(GatewayStartupHandler {

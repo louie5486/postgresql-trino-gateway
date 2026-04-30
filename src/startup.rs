@@ -55,11 +55,18 @@ impl ServerParameterProvider for GatewayParameterProvider {
 /// Handles the startup/authentication phase of a PostgreSQL connection.
 ///
 /// Two modes:
-/// - `config.auth == false`: No password required. Connects to Trino with the
-///   configured --trino-user and no auth.
-/// - `config.auth == true`: Requests cleartext password from the PG client.
-///   Forwards username + password to Trino as HTTP Basic auth. If Trino rejects
-///   the credentials, the PG connection is refused.
+/// - `config.auth == false`: no password challenge; connects to Trino with
+///   `--trino-user` and no per-client credentials.
+/// - `config.auth == true`: requests a cleartext password from the PG
+///   client and forwards (username, password) to Trino as HTTP Basic auth.
+///   If Trino rejects the credentials, the PG connection is refused.
+///
+/// SCRAM-SHA-256 is intentionally not implemented. SCRAM is a server-side
+/// challenge-response that does not expose the cleartext password to the
+/// server, but the gateway needs the cleartext password to authenticate to
+/// Trino on the client's behalf. To make `--auth` safe over the network,
+/// the gateway requires TLS termination — `policy::validate` enforces this
+/// at startup before any client can connect.
 #[derive(Debug)]
 pub struct GatewayStartupHandler {
     pub config: Arc<Config>,

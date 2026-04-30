@@ -6,6 +6,7 @@ pub mod config;
 pub mod error_mapping;
 pub mod handler;
 pub mod intercept;
+pub mod policy;
 pub mod query_extended;
 pub(crate) mod query_inspection;
 pub(crate) mod query_pipeline;
