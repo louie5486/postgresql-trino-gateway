@@ -135,7 +135,20 @@ fn encode_number(n: &serde_json::Number, base: &str) -> String {
             if let Some(f) = n.as_f64()
                 && f.is_finite()
             {
-                return (f as i64).to_string();
+                // `f as i64` saturates at the type limits, so 1e30 would
+                // silently become i64::MAX and the client would see a wildly
+                // wrong value. Cast only when the float demonstrably fits;
+                // otherwise pass the float text through and let PostgreSQL's
+                // integer parser reject it client-side. Fail-closed beats a
+                // quiet data-corruption bug.
+                //
+                // The boundary at exactly i64::MAX is excluded because
+                // `i64::MAX as f64` rounds up to 2^63 (not representable in
+                // i64), so the round-trip would silently saturate.
+                if f >= i64::MIN as f64 && f < i64::MAX as f64 {
+                    return (f as i64).to_string();
+                }
+                return f.to_string();
             }
             n.to_string()
         }
@@ -443,6 +456,63 @@ mod tests {
         // our integer path must still render "42" for int8 target.
         let val: serde_json::Value = serde_json::from_str("42.0").unwrap();
         assert_eq!(encode_value(&val, "integer"), Some("42".to_owned()));
+    }
+
+    /// Regression: previously, an out-of-range float for a BIGINT target was
+    /// silently cast via `f as i64`, which saturates to `i64::MAX`. The
+    /// client would see 9223372036854775807 instead of an error. Now we emit
+    /// the float as text so PostgreSQL's int8 parser rejects it client-side.
+    #[test]
+    fn encode_bigint_overflow_does_not_silently_saturate() {
+        let val = serde_json::Value::Number(serde_json::Number::from_f64(1.0e30).unwrap());
+        let encoded = encode_value(&val, "bigint").expect("must encode");
+        assert!(
+            encoded != "9223372036854775807",
+            "must not saturate to i64::MAX: got {encoded}"
+        );
+        // The float should round-trip as some recognisable form of 1e30.
+        assert!(
+            encoded.contains('e') || encoded.starts_with('1'),
+            "expected float-shaped text, got {encoded}"
+        );
+    }
+
+    #[test]
+    fn encode_bigint_negative_overflow_does_not_saturate() {
+        let val = serde_json::Value::Number(serde_json::Number::from_f64(-1.0e30).unwrap());
+        let encoded = encode_value(&val, "bigint").expect("must encode");
+        assert!(
+            encoded != i64::MIN.to_string(),
+            "must not saturate to i64::MIN: got {encoded}"
+        );
+        assert!(encoded.starts_with('-'));
+    }
+
+    #[test]
+    fn encode_bigint_in_range_float_still_casts() {
+        // 9e18 fits comfortably below i64::MAX (9.22e18); should cast cleanly.
+        let val = serde_json::Value::Number(serde_json::Number::from_f64(9.0e18).unwrap());
+        let encoded = encode_value(&val, "bigint").expect("must encode");
+        assert!(
+            !encoded.contains('e') && !encoded.contains('.'),
+            "in-range float should produce integer text: got {encoded}"
+        );
+    }
+
+    #[test]
+    fn encode_integer_from_huge_float_is_not_truncated() {
+        // INT4 target with an out-of-range float: same fail-closed behaviour
+        // as BIGINT. We don't try to fit the i32 range explicitly because
+        // PG's int4 parser rejects anything outside its range, and the cast
+        // would in any case saturate at i64::MAX before reaching the wire.
+        let val = serde_json::Value::Number(serde_json::Number::from_f64(1.0e15).unwrap());
+        let encoded = encode_value(&val, "integer").expect("must encode");
+        // 1e15 fits in i64 so we cast; the i64 representation is far above
+        // i32::MAX and PG's int4 parser will reject it at the client.
+        assert!(
+            encoded.parse::<i64>().is_ok(),
+            "in-range-for-i64 cast should be valid integer text: got {encoded}"
+        );
     }
 
     #[test]
