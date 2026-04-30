@@ -100,7 +100,7 @@ fn trino_config() -> Option<Config> {
     let host = std::env::var("TRINO_HOST").ok()?;
     let port: u16 = std::env::var("TRINO_PORT").ok()?.parse().ok()?;
     let ssl = std::env::var("TRINO_SSL").ok().is_some_and(|v| v == "true");
-    let ssl_insecure = std::env::var("TRINO_SSL_INSECURE")
+    let tls_no_verify = std::env::var("TRINO_TLS_NO_VERIFY")
         .ok()
         .is_some_and(|v| v == "true");
     let catalog = std::env::var("TRINO_CATALOG").unwrap_or_else(|_| "tpch".to_string());
@@ -115,7 +115,7 @@ fn trino_config() -> Option<Config> {
         trino_schema: schema,
         trino_user: "trino".to_string(),
         trino_ssl: ssl,
-        trino_tls_no_verify: ssl_insecure,
+        trino_tls_no_verify: tls_no_verify,
         trino_allow_plaintext_auth: false,
         auth: false,
         allow_insecure_listener: false,

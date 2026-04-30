@@ -10,8 +10,11 @@ TRINO_CATALOG="${TRINO_CATALOG:-tpch}"
 TRINO_SCHEMA="${TRINO_SCHEMA:-sf1}"
 LOG_LEVEL="${RUST_LOG:-postgresql_trino_gateway=info}"
 
-# Optional flags (set to empty string to disable)
-SSL_FLAGS="${SSL_FLAGS:---trino-ssl --trino-tls-no-verify}"
+# Optional flags (set to empty string to disable, or to your own list).
+# The default is `--trino-ssl` alone, with full certificate verification.
+# Add `--trino-tls-no-verify` only if your Trino uses a self-signed cert
+# you cannot install in the system trust store.
+SSL_FLAGS="${SSL_FLAGS:---trino-ssl}"
 AUTH_FLAG="${AUTH_FLAG:-}"  # Set to "--auth" to require passwords
 
 BINARY="./target/release/postgresql-trino-gateway"

@@ -160,6 +160,11 @@ pub fn validate_trino_posture(config: &Config) -> Result<()> {
                 "forwarding client passwords to Trino over plain HTTP. \
                  Use only with a loopback or otherwise-trusted Trino endpoint."
             );
+        } else {
+            tracing::warn!(
+                "--trino-allow-plaintext-auth has no effect when --auth is disabled; \
+                 the gateway forwards no credentials"
+            );
         }
     }
     if config.auth && !config.trino_ssl && !config.trino_allow_plaintext_auth {
@@ -404,28 +409,54 @@ mod tests {
         assert!(validate_trino_posture(&c).is_ok());
     }
 
-    /// Tls-no-verify without --trino-ssl is a no-op flag — warn but pass.
-    /// The flag has no effect because verification only runs over TLS.
+    /// Tls-no-verify without --trino-ssl: the flag has no effect because
+    /// verification only runs over TLS. Warn, but don't refuse.
     #[test]
-    fn trino_posture_tls_no_verify_without_ssl_is_a_noop() {
+    fn trino_posture_tls_no_verify_without_ssl_warns_but_passes() {
         let mut c = cfg(false, "127.0.0.1:5432", false);
         c.trino_ssl = false;
         c.trino_tls_no_verify = true;
-        c.trino_allow_plaintext_auth = false; // no auth so bail doesn't fire
-        // auth is off here (cfg(false, ...)) so the auth+http refusal
-        // doesn't apply; the no-verify-without-ssl warn fires.
+        // auth is off here so the auth+http refusal doesn't apply.
         assert!(validate_trino_posture(&c).is_ok());
     }
 
-    /// Plaintext-auth flag set without --auth is a no-op — Trino sees no
-    /// password to forward. Warn (handled in the with-ssl branch) but
-    /// pass.
+    /// Plaintext-auth flag set with --trino-ssl on: redundant (TLS already
+    /// protects the credentials in transit). Warn but pass.
     #[test]
-    fn trino_posture_plaintext_auth_with_https_is_a_noop() {
+    fn trino_posture_plaintext_auth_with_https_warns_but_passes() {
         let mut c = cfg(true, "127.0.0.1:5432", true);
         c.trino_allow_plaintext_auth = true;
-        // With trino_ssl=true the plaintext-auth flag is irrelevant; warn,
-        // but no error.
         assert!(validate_trino_posture(&c).is_ok());
+    }
+
+    /// Plaintext-auth flag set with --auth off and Trino over HTTP: the
+    /// flag would only matter if credentials were being forwarded, but
+    /// there are none. Warn but pass.
+    #[test]
+    fn trino_posture_plaintext_auth_without_auth_warns_but_passes() {
+        let mut c = cfg(false, "127.0.0.1:5432", false);
+        c.trino_ssl = false;
+        c.trino_allow_plaintext_auth = true;
+        assert!(validate_trino_posture(&c).is_ok());
+    }
+
+    /// Defence in depth: if validate_trino_posture is ever bypassed, the
+    /// trino-rust-client itself rejects the broken combo at build time
+    /// (BasicAuthWithHttp). Pin that contract so a future trino-rust-client
+    /// upgrade that loosens it doesn't silently let credentials leak over
+    /// plain HTTP without the operator's explicit opt-in.
+    #[test]
+    fn trino_client_builder_rejects_basic_auth_over_http_when_not_opted_in() {
+        use trino_rust_client::ClientBuilder;
+        use trino_rust_client::auth::Auth;
+        // secure(false) is the default, auth_http_insecure(false) is the
+        // default; setting Basic auth in this state must error at build().
+        let result = ClientBuilder::new("u", "h")
+            .auth(Auth::new_basic("u", Some("pw")))
+            .build();
+        assert!(
+            result.is_err(),
+            "trino-rust-client must reject Basic auth over HTTP when not explicitly allowed"
+        );
     }
 }

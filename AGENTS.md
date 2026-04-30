@@ -36,7 +36,7 @@ cargo clippy --manifest-path gateway/Cargo.toml                  # lint check
 cargo fmt --manifest-path gateway/Cargo.toml --check             # format check
 
 # With Trino (read-only tests):
-TRINO_HOST=... TRINO_PORT=... TRINO_SSL=true TRINO_SSL_INSECURE=true \
+TRINO_HOST=... TRINO_PORT=... TRINO_SSL=true TRINO_TLS_NO_VERIFY=true \
   TRINO_CATALOG=tpch TRINO_SCHEMA=sf1 \
   cargo test --manifest-path gateway/Cargo.toml
 

@@ -39,10 +39,13 @@ export TRINO_SCHEMA=sf1
     --listen-addr 0.0.0.0:15432 \
     --trino-host your-trino-host \
     --trino-port 8443 \
-    --trino-ssl --trino-tls-no-verify \
+    --trino-ssl \
     --trino-catalog tpch \
     --trino-schema sf1
 ```
+
+Add `--trino-tls-no-verify` only if your Trino uses a self-signed
+certificate you cannot install in the system trust store.
 
 ### Connect
 
@@ -145,7 +148,7 @@ Power BI / psql / DBeaver
 cargo test
 
 # Full integration tests (needs Trino)
-TRINO_HOST=... TRINO_PORT=... TRINO_SSL=true TRINO_SSL_INSECURE=true \
+TRINO_HOST=... TRINO_PORT=... TRINO_SSL=true TRINO_TLS_NO_VERIFY=true \
     TRINO_CATALOG=tpch TRINO_SCHEMA=sf1 \
     cargo test
 
