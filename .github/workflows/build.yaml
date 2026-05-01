@@ -77,7 +77,13 @@ jobs:
         run: |
           file target/x86_64-unknown-linux-musl/release/postgresql-trino-gateway \
             | tee /tmp/file.out
-          grep -q "statically linked" /tmp/file.out
+          # `file` reports a fully-static musl binary as either
+          # "statically linked" (older builds) or "static-pie linked"
+          # (newer Rust + musl default — position-independent AND
+          # statically linked). Both are fine; reject only "dynamically
+          # linked".
+          grep -qE 'statically linked|static-pie linked' /tmp/file.out
+          ! grep -q 'dynamically linked' /tmp/file.out
 
   # Single required check for branch protection rules.
   finished:
