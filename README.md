@@ -209,23 +209,24 @@ client-requested format code) and the `FieldFormat::Text` constants in
 
 The repo has three kinds of tests, in increasing fidelity:
 
-1. **Unit tests (`cargo test --lib`).** ~191 tests inline in each
-   module. No Trino, no network, no subprocess. Run by default in CI
-   on every commit.
+1. **Unit tests (`cargo test --lib`).** Inline in each module. No
+   Trino, no network, no subprocess. Run by default in CI on every
+   commit.
 2. **Integration tests via `tokio-postgres`
-   (`tests/integration_test.rs`).** ~30 tests that drive the gateway
-   over the real PG wire protocol using the Rust `tokio-postgres`
-   client. Each test spawns the gateway in-process on a random
-   port and connects to it. Tests that need a real Trino
-   automatically skip when `TRINO_HOST` is unset.
-3. **Integration tests via real `psql` (`tests/psql_integration_test.rs`).**
-   10 tests that drive the gateway by spawning the real `psql`
-   command-line client (libpq) as a subprocess. Catches client-
-   specific issues that an embedded driver wouldn't surface — startup
-   negotiation, notice handling, the simple-query-with-CommandComplete
-   flow. Slower per case (~50ms subprocess overhead) so kept to a
-   focused subset, not a full mirror of (2). Skipped automatically if
-   `psql` isn't on `PATH` or `TRINO_HOST` is unset.
+   (`tests/integration_test.rs`).** Drive the gateway over the real
+   PG wire protocol using the Rust `tokio-postgres` client. Each test
+   spawns the gateway in-process on a random port and connects to
+   it. Tests that need a real Trino automatically skip when
+   `TRINO_HOST` is unset.
+3. **Integration tests via real `psql`
+   (`tests/psql_integration_test.rs`).** Drive the gateway by
+   spawning the real `psql` command-line client (libpq) as a
+   subprocess. Catches client-specific issues that an embedded driver
+   wouldn't surface — startup negotiation, notice handling, the
+   simple-query-with-CommandComplete flow. Slower per case
+   (subprocess overhead) so kept to a focused subset, not a full
+   mirror of (2). Skipped automatically if `psql` isn't on `PATH` or
+   `TRINO_HOST` is unset.
 
 ```bash
 # Unit tests only — no Trino required.
