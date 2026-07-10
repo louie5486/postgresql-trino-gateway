@@ -29,7 +29,8 @@ RUN if [ ! -f /app/postgresql-trino-gateway ]; then \
 # Find the latest version at https://catalog.redhat.com/software/containers/ubi10/ubi-minimal
 # IMPORTANT: Use the "Manifest List Digest" (multi-arch) rather than the
 # single-arch "Image Digest".
-FROM registry.access.redhat.com/ubi10/ubi-minimal AS final
+#FROM registry.access.redhat.com/ubi10/ubi-minimal AS final
+FROM registry.access.redhat.com/ubi9/ubi-minimal AS final
 
 ARG VERSION
 ARG RELEASE="1"

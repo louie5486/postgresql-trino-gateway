@@ -1,0 +1,19 @@
+step1: create certification for gateway service.
+openssl req -x509 -newkey rsa:2048 -nodes -keyout agent.key -out agent.crt   -days 825   -config agent-cert.cnf -extensions v3_ext
+
+step2: execute run.sh for start gateway service.
+./run.sh --listen-addr 0.0.0.0:5432 \
+  --trino-host 10.4.2.56 \
+  --trino-port 8443 \
+  --trino-catalog s3ice \
+  --trino-schema test_db \
+  --trino-ssl \
+  --trino-tls-no-verify \
+  --tls-cert agent.crt \
+  --tls-key agent.key \
+  --auth \   
+  --log-level debug \
+  -y
+
+step3: view gateway service operation log.
+docker logs -f pgtrino-gateway
